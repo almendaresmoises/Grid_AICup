@@ -1,0 +1,23 @@
+<Solution>
+    <Configurations>
+        <Platform Name="Any CPU" />
+    </Configurations>
+    <Folder Name="/src/">
+        <Project Path="src/Grid.Domain/Grid.Domain.csproj" />
+        <Project Path="src/Grid.Application/Grid.Application.csproj" />
+        <Project Path="src/Grid.EntityFrameworkCore/Grid.EntityFrameworkCore.csproj" />
+        <Project Path="src/Grid.Domain.Shared/Grid.Domain.Shared.csproj" />
+        <Project Path="src/Grid.Application.Contracts/Grid.Application.Contracts.csproj" />
+        <Project Path="src/Grid.HttpApi/Grid.HttpApi.csproj" />
+        <Project Path="src/Grid.HttpApi.Client/Grid.HttpApi.Client.csproj" />
+        <Project Path="src/Grid.HttpApi.Host/Grid.HttpApi.Host.csproj" />
+        <Project Path="src/Grid.DbMigrator/Grid.DbMigrator.csproj" />
+    </Folder>
+    <Folder Name="/test/">
+        <Project Path="test/Grid.Application.Tests/Grid.Application.Tests.csproj" />
+        <Project Path="test/Grid.EntityFrameworkCore.Tests/Grid.EntityFrameworkCore.Tests.csproj" />
+        <Project Path="test/Grid.TestBase/Grid.TestBase.csproj" />
+        <Project Path="test/Grid.Domain.Tests/Grid.Domain.Tests.csproj" />
+        <Project Path="test/Grid.HttpApi.Client.ConsoleTestApp/Grid.HttpApi.Client.ConsoleTestApp.csproj" />
+    </Folder>
+</Solution>

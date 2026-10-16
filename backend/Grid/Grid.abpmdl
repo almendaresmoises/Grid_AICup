@@ -1,0 +1,109 @@
+{
+  "template": "app",
+  "imports": {
+    "Volo.Abp.LeptonXLiteTheme": {
+      "version": "5.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    },
+    "Volo.Abp.Account": {
+      "version": "10.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    },
+    "Volo.Abp.OpenIddict": {
+      "version": "10.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    },
+    "Volo.Abp.Identity": {
+      "version": "10.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    },
+    "Volo.Abp.SettingManagement": {
+      "version": "10.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    },
+    "Volo.Abp.PermissionManagement": {
+      "version": "10.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    },
+    "Volo.Abp.FeatureManagement": {
+      "version": "10.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    },
+    "Volo.Abp.BlobStoring.Database": {
+      "version": "10.7.0",
+      "isInstalled": true,
+      "creationTime": "10/16/2026 06:31:21 +00:00"
+    }
+  },
+  "folders": {
+    "items": {
+      "src": {},
+      "test": {}
+    }
+  },
+  "packages": {
+    "Grid.Application": {
+      "path": "src/Grid.Application/Grid.Application.abppkg",
+      "folder": "src"
+    },
+    "Grid.Application.Tests": {
+      "path": "test/Grid.Application.Tests/Grid.Application.Tests.abppkg",
+      "folder": "test"
+    },
+    "Grid.Domain.Shared": {
+      "path": "src/Grid.Domain.Shared/Grid.Domain.Shared.abppkg",
+      "folder": "src"
+    },
+    "Grid.Application.Contracts": {
+      "path": "src/Grid.Application.Contracts/Grid.Application.Contracts.abppkg",
+      "folder": "src"
+    },
+    "Grid.HttpApi": {
+      "path": "src/Grid.HttpApi/Grid.HttpApi.abppkg",
+      "folder": "src"
+    },
+    "Grid.HttpApi.Client": {
+      "path": "src/Grid.HttpApi.Client/Grid.HttpApi.Client.abppkg",
+      "folder": "src"
+    },
+    "Grid.EntityFrameworkCore.Tests": {
+      "path": "test/Grid.EntityFrameworkCore.Tests/Grid.EntityFrameworkCore.Tests.abppkg",
+      "folder": "test"
+    },
+    "Grid.EntityFrameworkCore": {
+      "path": "src/Grid.EntityFrameworkCore/Grid.EntityFrameworkCore.abppkg",
+      "folder": "src"
+    },
+    "Grid.TestBase": {
+      "path": "test/Grid.TestBase/Grid.TestBase.abppkg",
+      "folder": "test"
+    },
+    "Grid.Domain.Tests": {
+      "path": "test/Grid.Domain.Tests/Grid.Domain.Tests.abppkg",
+      "folder": "test"
+    },
+    "Grid.HttpApi.Client.ConsoleTestApp": {
+      "path": "test/Grid.HttpApi.Client.ConsoleTestApp/Grid.HttpApi.Client.ConsoleTestApp.abppkg",
+      "folder": "test"
+    },
+    "Grid.DbMigrator": {
+      "path": "src/Grid.DbMigrator/Grid.DbMigrator.abppkg",
+      "folder": "src"
+    },
+    "Grid.HttpApi.Host": {
+      "path": "src/Grid.HttpApi.Host/Grid.HttpApi.Host.abppkg",
+      "folder": "src"
+    },
+    "Grid.Domain": {
+      "path": "src/Grid.Domain/Grid.Domain.abppkg",
+      "folder": "src"
+    }
+  }
+}
