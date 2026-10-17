@@ -13,10 +13,16 @@ using Volo.Abp.PermissionManagement.EntityFrameworkCore;
 using Volo.Abp.SettingManagement.EntityFrameworkCore;
 using Volo.Abp.BlobStoring.Database.EntityFrameworkCore;
 using Volo.Abp.Studio;
+using Grid.Reconciliation.EntityFrameworkCore;
+using Grid.Parsers.EntityFrameworkCore;
+using Grid.Datasets.EntityFrameworkCore;
 
 namespace Grid.EntityFrameworkCore;
 
 [DependsOn(
+    typeof(GridDatasetsEntityFrameworkCoreModule),
+    typeof(GridParsersEntityFrameworkCoreModule),
+    typeof(GridReconciliationEntityFrameworkCoreModule),
     typeof(GridDomainModule),
     typeof(AbpPermissionManagementEntityFrameworkCoreModule),
     typeof(AbpSettingManagementEntityFrameworkCoreModule),

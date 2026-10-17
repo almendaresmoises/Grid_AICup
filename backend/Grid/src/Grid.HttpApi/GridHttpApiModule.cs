@@ -1,4 +1,4 @@
-﻿using Localization.Resources.AbpUi;
+using Localization.Resources.AbpUi;
 using Grid.Localization;
 using Volo.Abp.Account;
 using Volo.Abp.SettingManagement;
@@ -7,10 +7,16 @@ using Volo.Abp.Identity;
 using Volo.Abp.Modularity;
 using Volo.Abp.PermissionManagement.HttpApi;
 using Volo.Abp.Localization;
+using Grid.Reconciliation;
+using Grid.Parsers;
+using Grid.Datasets;
 
 namespace Grid;
 
  [DependsOn(
+    typeof(GridDatasetsHttpApiModule),
+    typeof(GridParsersHttpApiModule),
+    typeof(GridReconciliationHttpApiModule),
     typeof(GridApplicationContractsModule),
     typeof(AbpPermissionManagementHttpApiModule),
     typeof(AbpSettingManagementHttpApiModule),

@@ -12,10 +12,16 @@ using Volo.Abp.SettingManagement;
 using Volo.Abp.VirtualFileSystem;
 using Volo.Abp.OpenIddict;
 using Volo.Abp.BlobStoring.Database;
+using Grid.Reconciliation;
+using Grid.Parsers;
+using Grid.Datasets;
 
 namespace Grid;
 
 [DependsOn(
+    typeof(GridDatasetsDomainSharedModule),
+    typeof(GridParsersDomainSharedModule),
+    typeof(GridReconciliationDomainSharedModule),
     typeof(AbpAuditLoggingDomainSharedModule),
     typeof(AbpBackgroundJobsDomainSharedModule),
     typeof(AbpFeatureManagementDomainSharedModule),

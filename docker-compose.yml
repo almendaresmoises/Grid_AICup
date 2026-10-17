@@ -1,0 +1,30 @@
+# Local stand-ins for the same Pub/Sub and Cloud Storage APIs used in production.
+# Postgres stays on ConnectionStrings__Default (local Docker, Supabase, or Cloud SQL).
+# Start with: docker compose up -d
+services:
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"
+
+  gcs:
+    image: fsouza/fake-gcs-server:1.52.3
+    command:
+      - -scheme
+      - http
+      - -host
+      - 0.0.0.0
+      - -port
+      - "4443"
+      - -public-host
+      - localhost:4443
+      - -external-url
+      - http://localhost:4443
+    ports:
+      - "4443:4443"
+    volumes:
+      - grid-gcs:/data
+
+volumes:
+  grid-gcs:

@@ -17,10 +17,16 @@ using Volo.Abp.BackgroundJobs;
 using Volo.Abp.Emailing;
 using Volo.Abp.FeatureManagement;
 using Volo.Abp.Identity;
+using Grid.Reconciliation;
+using Grid.Parsers;
+using Grid.Datasets;
 
 namespace Grid;
 
 [DependsOn(
+    typeof(GridDatasetsDomainModule),
+    typeof(GridParsersDomainModule),
+    typeof(GridReconciliationDomainModule),
     typeof(GridDomainSharedModule),
     typeof(AbpAuditLoggingDomainModule),
     typeof(AbpCachingModule),

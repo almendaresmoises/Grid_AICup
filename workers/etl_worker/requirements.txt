@@ -1,0 +1,13 @@
+polars==1.43.2
+pydantic
+python-dotenv
+pyarrow
+openpyxl
+fastexcel
+fsspec
+gcsfs
+cryptography
+msoffcrypto-tool
+google-cloud-storage
+google-cloud-pubsub
+requests

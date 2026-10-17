@@ -13,6 +13,30 @@
         <Project Path="src/Grid.HttpApi.Host/Grid.HttpApi.Host.csproj" />
         <Project Path="src/Grid.DbMigrator/Grid.DbMigrator.csproj" />
     </Folder>
+    <Folder Name="/modules/Grid.Reconciliation/">
+        <Project Path="modules/Grid.Reconciliation/src/Grid.Reconciliation.Domain.Shared/Grid.Reconciliation.Domain.Shared.csproj" />
+        <Project Path="modules/Grid.Reconciliation/src/Grid.Reconciliation.Domain/Grid.Reconciliation.Domain.csproj" />
+        <Project Path="modules/Grid.Reconciliation/src/Grid.Reconciliation.Application.Contracts/Grid.Reconciliation.Application.Contracts.csproj" />
+        <Project Path="modules/Grid.Reconciliation/src/Grid.Reconciliation.Application/Grid.Reconciliation.Application.csproj" />
+        <Project Path="modules/Grid.Reconciliation/src/Grid.Reconciliation.EntityFrameworkCore/Grid.Reconciliation.EntityFrameworkCore.csproj" />
+        <Project Path="modules/Grid.Reconciliation/src/Grid.Reconciliation.HttpApi/Grid.Reconciliation.HttpApi.csproj" />
+    </Folder>
+    <Folder Name="/modules/Grid.Parsers/">
+        <Project Path="modules/Grid.Parsers/src/Grid.Parsers.Domain.Shared/Grid.Parsers.Domain.Shared.csproj" />
+        <Project Path="modules/Grid.Parsers/src/Grid.Parsers.Domain/Grid.Parsers.Domain.csproj" />
+        <Project Path="modules/Grid.Parsers/src/Grid.Parsers.Application.Contracts/Grid.Parsers.Application.Contracts.csproj" />
+        <Project Path="modules/Grid.Parsers/src/Grid.Parsers.Application/Grid.Parsers.Application.csproj" />
+        <Project Path="modules/Grid.Parsers/src/Grid.Parsers.EntityFrameworkCore/Grid.Parsers.EntityFrameworkCore.csproj" />
+        <Project Path="modules/Grid.Parsers/src/Grid.Parsers.HttpApi/Grid.Parsers.HttpApi.csproj" />
+    </Folder>
+    <Folder Name="/modules/Grid.Datasets/">
+        <Project Path="modules/Grid.Datasets/src/Grid.Datasets.Domain.Shared/Grid.Datasets.Domain.Shared.csproj" />
+        <Project Path="modules/Grid.Datasets/src/Grid.Datasets.Domain/Grid.Datasets.Domain.csproj" />
+        <Project Path="modules/Grid.Datasets/src/Grid.Datasets.Application.Contracts/Grid.Datasets.Application.Contracts.csproj" />
+        <Project Path="modules/Grid.Datasets/src/Grid.Datasets.Application/Grid.Datasets.Application.csproj" />
+        <Project Path="modules/Grid.Datasets/src/Grid.Datasets.EntityFrameworkCore/Grid.Datasets.EntityFrameworkCore.csproj" />
+        <Project Path="modules/Grid.Datasets/src/Grid.Datasets.HttpApi/Grid.Datasets.HttpApi.csproj" />
+    </Folder>
     <Folder Name="/test/">
         <Project Path="test/Grid.Application.Tests/Grid.Application.Tests.csproj" />
         <Project Path="test/Grid.EntityFrameworkCore.Tests/Grid.EntityFrameworkCore.Tests.csproj" />

@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Grid.Domain\Grid.Domain.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Reconciliation\src\Grid.Reconciliation.Domain\Grid.Reconciliation.Domain.csproj" />
     <ProjectReference Include="..\Grid.TestBase\Grid.TestBase.csproj" />
   </ItemGroup>
 

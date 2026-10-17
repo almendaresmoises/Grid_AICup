@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -14,6 +15,9 @@ using Microsoft.AspNetCore.Extensions.DependencyInjection;
 using OpenIddict.Validation.AspNetCore;
 using OpenIddict.Server.AspNetCore;
 using Grid.EntityFrameworkCore;
+using Grid.Reconciliation;
+using Grid.Parsers;
+using Grid.Datasets;
 using Grid.MultiTenancy;
 using Grid.HealthChecks;
 using Microsoft.OpenApi;
@@ -146,6 +150,11 @@ public class GridHttpApiHostModule : AbpModule
             options.CheckLibs = false;
         });
 
+        Configure<MvcOptions>(options =>
+        {
+            options.Filters.Add<ClientCancellationExceptionFilter>();
+        });
+
         ConfigureStudio(hostingEnvironment);
         ConfigureAuthentication(context);
         ConfigureUrls(configuration);
@@ -234,6 +243,9 @@ public class GridHttpApiHostModule : AbpModule
         Configure<AbpAspNetCoreMvcOptions>(options =>
         {
             options.ConventionalControllers.Create(typeof(GridApplicationModule).Assembly);
+            options.ConventionalControllers.Create(typeof(GridReconciliationApplicationModule).Assembly);
+            options.ConventionalControllers.Create(typeof(GridParsersApplicationModule).Assembly);
+            options.ConventionalControllers.Create(typeof(GridDatasetsApplicationModule).Assembly);
         });
     }
 
@@ -286,6 +298,21 @@ public class GridHttpApiHostModule : AbpModule
         var env = context.GetEnvironment();
 
         app.UseForwardedHeaders();
+
+        app.Use(async (httpContext, next) =>
+        {
+            try
+            {
+                await next();
+            }
+            catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
+            {
+                if (!httpContext.Response.HasStarted)
+                {
+                    httpContext.Response.StatusCode = 499;
+                }
+            }
+        });
 
         if (env.IsDevelopment())
         {

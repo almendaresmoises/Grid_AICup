@@ -10,6 +10,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\modules\Grid.Reconciliation\src\Grid.Reconciliation.Domain.Shared\Grid.Reconciliation.Domain.Shared.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Parsers\src\Grid.Parsers.Domain.Shared\Grid.Parsers.Domain.Shared.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Datasets\src\Grid.Datasets.Domain.Shared\Grid.Datasets.Domain.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Volo.Abp.BackgroundJobs.Domain.Shared" Version="10.7.0" />
     <PackageReference Include="Volo.Abp.AuditLogging.Domain.Shared" Version="10.7.0" />
     <PackageReference Include="Volo.Abp.FeatureManagement.Domain.Shared" Version="10.7.0" />

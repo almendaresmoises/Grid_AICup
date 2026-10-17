@@ -1,208 +1,216 @@
-import type { ReactNode } from "react"
-
-const stats = [
-  { label: "Records processed", value: "48,320", detail: "Across 3 sources" },
-  { label: "Value matched", value: "$12.4M", detail: "Settled today" },
-  { label: "Value still open", value: "$186,420", detail: "283 items" },
-  { label: "Match rate", value: "98.4%", detail: "By record count" },
-]
-
-const matchedByDay = [
-  { day: "3 Oct", value: 11.2 },
-  { day: "4 Oct", value: 10.8 },
-  { day: "5 Oct", value: 12.1 },
-  { day: "6 Oct", value: 13.4 },
-  { day: "7 Oct", value: 12.6 },
-  { day: "8 Oct", value: 9.4 },
-  { day: "9 Oct", value: 11.8 },
-  { day: "10 Oct", value: 12.9 },
-  { day: "11 Oct", value: 13.1 },
-  { day: "12 Oct", value: 11.5 },
-  { day: "13 Oct", value: 12.2 },
-  { day: "14 Oct", value: 13.6 },
-  { day: "15 Oct", value: 12.8 },
-  { day: "16 Oct", value: 12.4 },
-]
-
-const aging = [
-  { label: "Today", amount: 42180 },
-  { label: "2–7 days", amount: 68440 },
-  { label: "8–30 days", amount: 51080 },
-  { label: "Over 30 days", amount: 24720 },
-]
-
-const reasons = [
-  { label: "Amount difference", count: 86, amount: 74210 },
-  { label: "Missing on one side", count: 124, amount: 61840 },
-  { label: "Duplicate key", count: 31, amount: 28400 },
-  { label: "Date mismatch", count: 42, amount: 21970 },
-]
-
-const sources = [
-  { label: "POS", amount: 78640 },
-  { label: "Card processor", amount: 64210 },
-  { label: "Bank", amount: 43570 },
-]
-
-const openItems = [
-  { source: "POS", reference: "G-104482", age: "3 days", amount: 18420 },
-  { source: "Bank", reference: "DEP-88311", age: "12 days", amount: 14900 },
-  { source: "Card processor", reference: "TX-229184", age: "1 day", amount: 12640 },
-  { source: "POS", reference: "G-104901", age: "36 days", amount: 9875 },
-  { source: "Bank", reference: "DEP-88402", age: "6 days", amount: 8210 },
-]
+import { Button } from "@workspace/ui/components/button"
+import { useQuery } from "@tanstack/react-query"
+import { RefreshCw } from "lucide-react"
+import { useState } from "react"
+import { Link } from "react-router"
+import { ErrorNote } from "@/components/error-note"
+import { RunOutcomeChart } from "@/components/run-outcome-chart"
+import { api } from "@/lib/api"
+import type { Dashboard } from "@/lib/dashboard"
+import { inputClass } from "@/lib/ui"
 
 export function DashboardPage() {
+  const [period, setPeriod] = useState(30)
+  const summary = useQuery({
+    queryKey: ["dashboard", period],
+    queryFn: ({ signal }) =>
+      api<Dashboard>(`/api/app/dashboard?days=${period}`, { signal }),
+    staleTime: 30_000,
+    refetchOnMount: "always",
+    refetchInterval: 60_000,
+  })
+  const data = summary.data
+  const stats = data
+    ? [
+        { label: "Completed runs", value: data.completedRuns.toLocaleString() },
+        {
+          label: "Records processed",
+          value: data.totalRecords.toLocaleString(),
+        },
+        { label: "Exceptions", value: data.exceptionRecords.toLocaleString() },
+        {
+          label: "Match rate",
+          value:
+            data.matchRate === null ? "—" : `${data.matchRate.toFixed(1)}%`,
+        },
+      ]
+    : []
   return (
     <section className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-medium">Dashboard</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Processed through 16 Oct 2026</p>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((stat) => (
-          <article key={stat.label} className="border bg-card px-5 py-4">
-            <p className="text-muted-foreground text-sm">{stat.label}</p>
-            <p className="mt-2 font-heading text-2xl font-medium tracking-tight">{stat.value}</p>
-            <p className="text-muted-foreground mt-1 text-xs">{stat.detail}</p>
-          </article>
-        ))}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-5">
-        <Panel className="lg:col-span-3" title="Matched value" detail="Last 14 days">
-          <MatchedLine points={matchedByDay} />
-        </Panel>
-        <Panel className="lg:col-span-2" title="Open balance by age" detail="$186,420 still open">
-          <AmountBars rows={aging} />
-        </Panel>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Why rows are still open" detail="Count and dollars">
-          <ReasonList rows={reasons} />
-        </Panel>
-        <Panel title="Open amount by source" detail="Where the balance sits">
-          <AmountBars rows={sources} />
-        </Panel>
-      </div>
-
-      <Panel title="Largest open items" detail="Highest balances waiting to clear">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-muted-foreground border-b text-left text-xs">
-                <th className="py-2 pr-4 font-medium">Source</th>
-                <th className="py-2 pr-4 font-medium">Reference</th>
-                <th className="py-2 pr-4 font-medium">Age</th>
-                <th className="py-2 text-right font-medium">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {openItems.map((item) => (
-                <tr key={item.reference} className="border-b last:border-0">
-                  <td className="py-2.5 pr-4">{item.source}</td>
-                  <td className="py-2.5 pr-4 font-mono text-xs">{item.reference}</td>
-                  <td className="text-muted-foreground py-2.5 pr-4">{item.age}</td>
-                  <td className="py-2.5 text-right tabular-nums">{money(item.amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-medium">Dashboard</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Record outcomes from completed reconciliation runs. Repeated
+            executions count separately.
+          </p>
         </div>
-      </Panel>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="sr-only" htmlFor="dashboard-period">
+            Reporting period
+          </label>
+          <select
+            id="dashboard-period"
+            className={`${inputClass} w-auto`}
+            value={period}
+            onChange={(event) => setPeriod(Number(event.target.value))}
+          >
+            {[7, 30, 90].map((days) => (
+              <option key={days} value={days}>
+                Last {days} days
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={summary.isFetching}
+            aria-label="Refresh dashboard"
+            onClick={() => void summary.refetch()}
+          >
+            <RefreshCw className={summary.isFetching ? "animate-spin" : ""} />
+          </Button>
+        </div>
+      </div>
+      {summary.error ? (
+        <ErrorNote message={(summary.error as Error).message} />
+      ) : null}
+      {summary.isPending ? (
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading reconciliation summary…
+        </p>
+      ) : null}
+      {data ? (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {stats.map((stat) => (
+              <article className="border bg-card p-5" key={stat.label}>
+                <p className="text-sm text-muted-foreground">{stat.label}</p>
+                <p className="mt-2 text-3xl font-medium tabular-nums">
+                  {stat.value}
+                </p>
+              </article>
+            ))}
+          </div>
+          <article className="border bg-card">
+            <div className="flex flex-wrap items-start justify-between gap-2 border-b px-5 py-4">
+              <div>
+                <h2 className="font-medium">
+                  Reconciliation outcomes over time
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Daily record counts · {data.fromDate} to {data.throughDate} ·{" "}
+                  {data.timeZone}
+                </p>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                Updated {new Date(data.generatedAtUtc).toLocaleTimeString()}
+              </span>
+            </div>
+            <div className="p-5">
+              {data.completedRuns === 0 ? (
+                <p className="mb-4 text-sm text-muted-foreground">
+                  No completed runs in this period.{" "}
+                  <Link className="underline" to="/configuration">
+                    Configure a profile
+                  </Link>{" "}
+                  or select a different period.
+                </p>
+              ) : null}
+              <RunOutcomeChart
+                key={period}
+                days={data.days}
+                timeZone={data.timeZone}
+              />
+              <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+                Full match includes exact and aggregate matches. Partial match
+                uses partial-rule results. Exceptions include unmatched and
+                ambiguous records.
+              </p>
+            </div>
+          </article>
+          <article className="overflow-hidden border bg-card">
+            <div className="border-b px-5 py-4">
+              <h2 className="font-medium">
+                5 profiles with the lowest match rates
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Matched records (full + partial) ÷ total records across
+                completed runs in the selected period. Profiles without
+                processed records are excluded.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                    <th className="px-5 py-3 font-medium">Profile</th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      Match rate
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      Full match
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      Partial match
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      Exceptions
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">Runs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.lowestMatchProfiles.length === 0 ? (
+                    <tr>
+                      <td
+                        className="px-5 py-8 text-center text-muted-foreground"
+                        colSpan={6}
+                      >
+                        No profile results in this period.
+                      </td>
+                    </tr>
+                  ) : (
+                    data.lowestMatchProfiles.map((profile) => (
+                      <tr
+                        key={profile.profileId}
+                        className="border-b last:border-0 hover:bg-muted/30"
+                      >
+                        <td className="px-5 py-3">
+                          <Link
+                            className="font-medium underline-offset-4 hover:underline"
+                            to={`/reconciliation/profiles/${profile.profileId}`}
+                          >
+                            {profile.profileName}
+                          </Link>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {profile.totalRecords.toLocaleString()} records
+                          </p>
+                        </td>
+                        <td className="px-5 py-3 text-right font-medium tabular-nums">
+                          {profile.matchRate.toFixed(1)}%
+                        </td>
+                        <td className="px-5 py-3 text-right tabular-nums">
+                          {profile.fullMatchRecords.toLocaleString()}
+                        </td>
+                        <td className="px-5 py-3 text-right tabular-nums">
+                          {profile.partialMatchRecords.toLocaleString()}
+                        </td>
+                        <td className="px-5 py-3 text-right tabular-nums">
+                          {profile.exceptionRecords.toLocaleString()}
+                        </td>
+                        <td className="px-5 py-3 text-right tabular-nums">
+                          {profile.completedRuns.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </>
+      ) : null}
     </section>
   )
-}
-
-function Panel({ title, detail, className, children }: { title: string; detail: string; className?: string; children: ReactNode }) {
-  return (
-    <article className={`border bg-card p-5 ${className ?? ""}`}>
-      <h2 className="font-medium">{title}</h2>
-      <p className="text-muted-foreground mt-1 text-sm">{detail}</p>
-      <div className="mt-4">{children}</div>
-    </article>
-  )
-}
-
-function AmountBars({ rows }: { rows: { label: string; amount: number }[] }) {
-  const max = Math.max(...rows.map((row) => row.amount))
-  return (
-    <ul className="flex flex-col gap-3">
-      {rows.map((row) => (
-        <li key={row.label}>
-          <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-            <span>{row.label}</span>
-            <span className="tabular-nums">{money(row.amount)}</span>
-          </div>
-          <div className="bg-muted h-2">
-            <div className="bg-primary h-full" style={{ width: `${(row.amount / max) * 100}%` }} />
-          </div>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function ReasonList({ rows }: { rows: { label: string; count: number; amount: number }[] }) {
-  const max = Math.max(...rows.map((row) => row.amount))
-  return (
-    <ul className="flex flex-col gap-3">
-      {rows.map((row) => (
-        <li key={row.label}>
-          <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-            <span>{row.label}</span>
-            <span className="text-muted-foreground tabular-nums">
-              {row.count} · {money(row.amount)}
-            </span>
-          </div>
-          <div className="bg-muted h-2">
-            <div className="bg-primary h-full" style={{ width: `${(row.amount / max) * 100}%` }} />
-          </div>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function MatchedLine({ points }: { points: { day: string; value: number }[] }) {
-  const width = 640
-  const height = 220
-  const pad = { l: 48, r: 8, t: 12, b: 28 }
-  const min = 8
-  const max = 15
-  const x = (index: number) => pad.l + (index / (points.length - 1)) * (width - pad.l - pad.r)
-  const y = (value: number) => pad.t + (1 - (value - min) / (max - min)) * (height - pad.t - pad.b)
-  const line = points.map((point, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ")
-  const area = `${line} L${x(points.length - 1).toFixed(1)},${height - pad.b} L${x(0).toFixed(1)},${height - pad.b} Z`
-  const ticks = [9, 11, 13, 15]
-  const labelIndexes = [0, 4, 8, 13]
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-56 w-full" role="img" aria-label="Matched value over the last 14 days">
-      {ticks.map((tick) => (
-        <g key={tick}>
-          <line x1={pad.l} x2={width - pad.r} y1={y(tick)} y2={y(tick)} stroke="var(--border)" />
-          <text x={0} y={y(tick) + 4} fill="var(--muted-foreground)" fontSize="11">
-            ${tick}M
-          </text>
-        </g>
-      ))}
-      <path d={area} fill="var(--primary)" opacity="0.12" />
-      <path d={line} fill="none" stroke="var(--primary)" strokeWidth="2" />
-      {points.map((point, index) => (
-        <circle key={point.day} cx={x(index)} cy={y(point.value)} r="2.5" fill="var(--primary)" />
-      ))}
-      {labelIndexes.map((index) => (
-        <text key={points[index].day} x={x(index)} y={height - 6} textAnchor="middle" fill="var(--muted-foreground)" fontSize="11">
-          {points[index].day}
-        </text>
-      ))}
-    </svg>
-  )
-}
-
-function money(amount: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(amount)
 }

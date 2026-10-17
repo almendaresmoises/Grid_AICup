@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <Import Project="..\..\common.props" />
 
@@ -10,6 +10,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Grid.Domain.Shared\Grid.Domain.Shared.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Reconciliation\src\Grid.Reconciliation.Domain\Grid.Reconciliation.Domain.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Parsers\src\Grid.Parsers.Domain\Grid.Parsers.Domain.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Datasets\src\Grid.Datasets.Domain\Grid.Datasets.Domain.csproj" />
   </ItemGroup>
 
   <ItemGroup>

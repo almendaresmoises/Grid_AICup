@@ -21,6 +21,7 @@ export type Package = {
   profileVersion: number
   profileStatus: string
   creationTime: string
+  createdWithAi?: boolean
 }
 
 export type Profile = {
@@ -33,17 +34,23 @@ export type Profile = {
   definitionJson: string
   approvedDefinitionJson?: string | null
   hasBaseline: boolean
+  createdWithAi?: boolean
 }
 
 export type KeySpec = {
   type: "text" | "amount" | "date"
   fields: Record<string, string>
   strip_prefixes?: Record<string, string[]>
+  match_mode?: "exact" | "partial" | "fuzzy" | "divergent"
+  algorithm?: "damerau_levenshtein" | "numeric_best_practice" | "date_proximity" | "exact"
+  min_score?: number
+  tolerance?: string
+  expected_mismatch?: boolean
 }
 
 export type RuleSpec = {
   id: string
-  type: "exact" | "aggregate"
+  type: "exact" | "aggregate" | "partial"
   datasets: string[]
   keys: KeySpec[]
   target?: string
@@ -51,6 +58,8 @@ export type RuleSpec = {
   target_amount?: string
   source_amount?: string
   tolerance?: string
+  min_score?: number
+  remarks?: string
 }
 
 export type ProfileSpec = {
@@ -61,6 +70,8 @@ export type ProfileSpec = {
 }
 
 export type RunSummary = {
+  profileName: string
+  creatorId: string | null
   id: string
   profileId: string
   profileVersion: number
@@ -78,13 +89,19 @@ export type Evidence = {
   target?: string | null
   sourceSum?: string | null
   variance?: string | null
+  remarks?: string | null
+  score?: number | null
+  divergent_key?: string | null
 }
 
 export type MatchGroup = {
   rule: string
+  ruleType?: "exact" | "aggregate" | "partial"
   key: string[]
   records: Record<string, number[]>
   evidence: Evidence
+  remarks?: string | null
+  score?: number | null
 }
 
 export type UnresolvedRow = {
@@ -95,6 +112,7 @@ export type UnresolvedRow = {
 }
 
 export type RunDetail = RunSummary & {
+  datasets: Record<string, Record<string, string>[]>
   groups: MatchGroup[]
   unresolved: UnresolvedRow[]
 }
@@ -137,11 +155,17 @@ export function parseProfile(json: string): ProfileSpec {
     datasets: value.datasets ?? [],
     rules: (value.rules ?? []).map((rule) => ({
       ...rule,
+      type: (rule.type as "exact" | "aggregate" | "partial") || "exact",
       datasets: rule.datasets ?? [],
       keys: (rule.keys ?? []).map((key) => ({
         type: key.type,
         fields: key.fields ?? {},
         strip_prefixes: key.strip_prefixes,
+        match_mode: key.match_mode,
+        algorithm: key.algorithm,
+        min_score: key.min_score,
+        tolerance: key.tolerance,
+        expected_mismatch: key.expected_mismatch,
       })),
     })),
   }

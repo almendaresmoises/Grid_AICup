@@ -10,6 +10,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Grid.Domain\Grid.Domain.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Reconciliation\src\Grid.Reconciliation.EntityFrameworkCore\Grid.Reconciliation.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Parsers\src\Grid.Parsers.EntityFrameworkCore\Grid.Parsers.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\..\modules\Grid.Datasets\src\Grid.Datasets.EntityFrameworkCore\Grid.Datasets.EntityFrameworkCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,22 +1,15 @@
-import { Sparkles, SlidersHorizontal } from "lucide-react"
+import { Sparkles, SlidersHorizontal, Loader2, CheckCircle2, Clock } from "lucide-react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router"
-
-const options = [
-  {
-    to: "/configuration/ai",
-    title: "Configure with AI",
-    detail: "Upload one file per dataset and let the assistant draft a profile.",
-    icon: Sparkles,
-  },
-  {
-    to: "/configuration/manual",
-    title: "Manually Configure",
-    detail: "Edit parsers, datasets, and recon profiles yourself.",
-    icon: SlidersHorizontal,
-  },
-]
+import { getAiSessionState, subscribeAiSession, type AiSessionState } from "@/lib/ai-config-session"
 
 export function ConfigurationPage() {
+  const [session, setSession] = useState<AiSessionState>(getAiSessionState)
+
+  useEffect(() => {
+    return subscribeAiSession(setSession)
+  }, [])
+
   return (
     <section className="flex flex-col gap-6">
       <div>
@@ -24,18 +17,55 @@ export function ConfigurationPage() {
         <p className="text-muted-foreground mt-1 text-sm">Choose how you want to set up reconciliation.</p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        {options.map((option) => {
-          const Icon = option.icon
-          return (
-            <Link key={option.to} to={option.to} className="flex flex-col gap-3 border bg-card p-5 hover:bg-muted">
-              <Icon className="size-5 text-primary" />
-              <div>
-                <h2 className="font-medium">{option.title}</h2>
-                <p className="text-muted-foreground mt-1 text-sm">{option.detail}</p>
-              </div>
-            </Link>
-          )
-        })}
+        <Link
+          to="/configuration/ai"
+          className="relative flex flex-col gap-3 border bg-card p-5 hover:bg-muted transition-colors rounded-lg shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <Sparkles className="size-5 text-primary" />
+            {session.status === "running" ? (
+              <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary animate-pulse">
+                <Loader2 className="size-3 animate-spin" />
+                Step {session.currentStep} of 6
+              </span>
+            ) : session.status === "paused" ? (
+              <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                <Clock className="size-3" />
+                Paused on reload
+              </span>
+            ) : session.status === "completed" ? (
+              <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="size-3" />
+                Ready
+              </span>
+            ) : null}
+          </div>
+          <div>
+            <h2 className="font-medium text-base">Configure with AI</h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {session.status === "running"
+                ? `Currently ongoing: ${session.stepMessage || "Processing files…"}`
+                : session.status === "completed"
+                ? "Setup completed. Review configuration or run samples."
+                : "Upload one file per dataset and let the assistant draft a profile."}
+            </p>
+          </div>
+        </Link>
+
+        <Link
+          to="/configuration/manual"
+          className="flex flex-col gap-3 border bg-card p-5 hover:bg-muted transition-colors rounded-lg shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <SlidersHorizontal className="size-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="font-medium text-base">Manually Configure</h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Edit parsers, datasets, and recon profiles yourself.
+            </p>
+          </div>
+        </Link>
       </div>
     </section>
   )

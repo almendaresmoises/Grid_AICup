@@ -3,6 +3,7 @@ import { ChevronLeft, LayoutDashboard, Play, Settings2, LogOut } from "lucide-re
 import { useEffect, useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router"
 import { api, clearToken } from "@/lib/api"
+import { getAiSessionState, subscribeAiSession, type AiSessionState } from "@/lib/ai-config-session"
 
 const storageKey = "grid_sidebar"
 
@@ -60,12 +61,20 @@ export function Shell() {
       const config = await api<{ currentUser: CurrentUser }>("/api/abp/application-configuration")
       return config.currentUser
     },
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
   })
   const account = currentUser.data?.isAuthenticated ? accountLabel(currentUser.data) : null
+
+  const [session, setSession] = useState<AiSessionState>(getAiSessionState)
 
   useEffect(() => {
     localStorage.setItem(storageKey, collapsed ? "collapsed" : "expanded")
   }, [collapsed])
+
+  useEffect(() => {
+    return subscribeAiSession(setSession)
+  }, [])
 
   return (
     <div className="flex h-svh overflow-hidden bg-background text-foreground">
@@ -80,6 +89,8 @@ export function Shell() {
           <nav className="flex flex-1 flex-col gap-1 p-2" aria-label="Main">
             {links.map((link) => {
               const Icon = link.icon
+              const isConfigRunning = link.to === "/configuration" && session.status === "running"
+
               return (
                 <NavLink
                   key={link.to}
@@ -87,7 +98,7 @@ export function Shell() {
                   end={link.end}
                   title={collapsed ? link.label : undefined}
                   className={({ isActive }) =>
-                    `flex h-9 items-center gap-3 px-3 text-sm ${
+                    `flex h-9 items-center gap-3 px-3 text-sm relative ${
                       isActive
                         ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                         : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -96,6 +107,12 @@ export function Shell() {
                 >
                   <Icon className="size-4 shrink-0" />
                   <span className={labelMotion(collapsed)}>{link.label}</span>
+                  {isConfigRunning ? (
+                    <span
+                      title="AI Configuration is currently running in background"
+                      className="ml-auto size-2 rounded-full bg-primary animate-ping"
+                    />
+                  ) : null}
                 </NavLink>
               )
             })}

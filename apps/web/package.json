@@ -14,14 +14,17 @@
   "dependencies": {
     "@tanstack/react-query": "^5.104.3",
     "@workspace/ui": "*",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.58.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-router": "^8.4.0"
+    "react-router": "^8.4.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^10",
     "@tailwindcss/vite": "^4",
+    "@types/jszip": "^3.4.0",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",

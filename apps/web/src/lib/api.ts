@@ -6,6 +6,12 @@ export class ApiError extends Error {
 }
 
 const tokenKey = "grid_token"
+const apiBase = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "")
+
+function resolveUrl(path: string) {
+  if (!apiBase || path.startsWith("http")) return path
+  return `${apiBase}${path}`
+}
 
 export function getToken() {
   return sessionStorage.getItem(tokenKey)
@@ -27,14 +33,16 @@ export async function login(username: string, password: string) {
     password,
     scope: "profile email roles Grid",
   })
-  const response = await fetch("/connect/token", {
+  const response = await fetch(resolveUrl("/connect/token"), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new ApiError(payload.error_description || payload.error || "Sign-in failed")
+    throw new ApiError(
+      payload.error_description || payload.error || "Sign-in failed"
+    )
   }
   setToken(payload.access_token)
   return payload.access_token as string
@@ -43,7 +51,11 @@ export async function login(username: string, password: string) {
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set("Accept", "application/json")
-  if (init.body && !headers.has("Content-Type")) {
+  if (
+    init.body &&
+    !(init.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
     headers.set("Content-Type", "application/json")
   }
   const token = getToken()
@@ -51,7 +63,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("Authorization", `Bearer ${token}`)
   }
 
-  const response = await fetch(path, { ...init, headers })
+  const response = await fetch(resolveUrl(path), { ...init, headers })
   if (response.status === 401) {
     clearToken()
     if (!window.location.pathname.startsWith("/login")) {
@@ -67,7 +79,12 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await response.text()
   const payload = text ? JSON.parse(text) : null
   if (!response.ok) {
-    throw new ApiError(payload?.error?.message || payload?.error_description || text || "Request failed")
+    throw new ApiError(
+      payload?.error?.message ||
+        payload?.error_description ||
+        text ||
+        "Request failed"
+    )
   }
   return payload as T
 }
