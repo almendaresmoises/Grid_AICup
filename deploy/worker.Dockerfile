@@ -7,4 +7,6 @@ RUN pip install --no-cache-dir -r workers/etl_worker/requirements.txt
 COPY workers workers
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV PORT=8080
+EXPOSE 8080
 CMD ["python", "-m", "workers.etl_worker.message_consumer"]

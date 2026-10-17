@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
 import tempfile
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -90,37 +92,114 @@ def _load_env() -> None:
             return
 
 
+class CloudRunPushHandler(BaseHTTPRequestHandler):
+    """HTTP handler for Cloud Run health checks and Pub/Sub Push subscriptions."""
+
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def do_POST(self) -> None:
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        if not body:
+            self.send_response(400)
+            self.end_headers()
+            return
+
+        try:
+            envelope = json.loads(body.decode("utf-8"))
+            if (
+                isinstance(envelope, dict)
+                and "message" in envelope
+                and isinstance(envelope["message"], dict)
+                and "data" in envelope["message"]
+            ):
+                raw_bytes = base64.b64decode(envelope["message"]["data"])
+                payload = json.loads(raw_bytes.decode("utf-8"))
+            elif isinstance(envelope, dict):
+                payload = envelope
+            else:
+                raise ValueError("Unexpected JSON payload format")
+
+            process_payload(payload)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Processed")
+        except Exception as error:
+            logger.exception("Failed to process HTTP push message: %s", error)
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(str(error).encode("utf-8"))
+
+    def log_message(self, format: str, *args: Any) -> None:
+        path = str(args[0]) if args else ""
+        if "/healthz" in path or "GET /" in path:
+            return
+        logger.info("%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args)
+
+
 def main() -> None:
     _load_env()
-    project = os.environ["GOOGLE_CLOUD_PROJECT"]
-    topic = os.getenv("PUBSUB_PARSER_TOPIC", "grid-parser-runs")
-    subscription = os.getenv("PUBSUB_PARSER_SUBSCRIPTION", "grid-parser-runs-etl")
-    publisher = pubsub_v1.PublisherClient()
-    subscriber = pubsub_v1.SubscriberClient()
-    topic_path = publisher.topic_path(project, topic)
-    subscription_path = subscriber.subscription_path(project, subscription)
-    try:
-        publisher.create_topic(name=topic_path)
-    except AlreadyExists:
-        pass
-    try:
-        subscriber.create_subscription(name=subscription_path, topic=topic_path)
-    except AlreadyExists:
-        pass
+    port_env = os.getenv("PORT")
+    pubsub_mode = os.getenv("PUBSUB_MODE", "auto").lower()
 
-    def callback(message: pubsub_v1.subscriber.message.Message) -> None:
+    run_pull = pubsub_mode in ("pull", "streaming", "auto")
+    pull_future = None
+
+    project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GoogleCloud__ProjectId")
+    if run_pull and project:
+        topic = os.getenv("PUBSUB_PARSER_TOPIC", "grid-parser-runs")
+        subscription = os.getenv("PUBSUB_PARSER_SUBSCRIPTION", "grid-parser-runs-etl")
         try:
-            process_payload(json.loads(message.data.decode("utf-8")))
-            message.ack()
-        except BaseException as error:
-            if isinstance(error, (KeyboardInterrupt, SystemExit)):
-                raise
-            logger.exception("Parser run message failed: %s", error)
-            message.ack()
+            publisher = pubsub_v1.PublisherClient()
+            subscriber = pubsub_v1.SubscriberClient()
+            topic_path = publisher.topic_path(project, topic)
+            subscription_path = subscriber.subscription_path(project, subscription)
+            try:
+                publisher.create_topic(name=topic_path)
+            except AlreadyExists:
+                pass
+            try:
+                subscriber.create_subscription(name=subscription_path, topic=topic_path)
+            except AlreadyExists:
+                pass
 
-    logger.info("Listening on %s", subscription_path)
-    future = subscriber.subscribe(subscription_path, callback=callback)
-    future.result()
+            def callback(message: pubsub_v1.subscriber.message.Message) -> None:
+                try:
+                    process_payload(json.loads(message.data.decode("utf-8")))
+                    message.ack()
+                except BaseException as error:
+                    if isinstance(error, (KeyboardInterrupt, SystemExit)):
+                        raise
+                    logger.exception("Parser run message failed: %s", error)
+                    message.ack()
+
+            logger.info("Listening on %s", subscription_path)
+            pull_future = subscriber.subscribe(subscription_path, callback=callback)
+        except Exception as error:
+            logger.warning("Pub/Sub streaming pull setup skipped or failed: %s", error)
+
+    if port_env:
+        port = int(port_env)
+        logger.info("Starting worker HTTP listener on port %d (PUBSUB_MODE=%s)", port, pubsub_mode)
+        server = HTTPServer(("0.0.0.0", port), CloudRunPushHandler)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
+            if pull_future:
+                pull_future.cancel()
+    elif pull_future:
+        pull_future.result()
+    else:
+        logger.error("Neither PORT nor valid GOOGLE_CLOUD_PROJECT configured to start worker.")
 
 
 if __name__ == "__main__":
