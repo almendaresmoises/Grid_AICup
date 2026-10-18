@@ -1,133 +1,102 @@
-param (
-    [Parameter(Mandatory = $false)]
-    [string]$ProjectId,
-    [Parameter(Mandatory = $false)]
-    [string]$Region = "us-central1",
-    [Parameter(Mandatory = $false)]
-    [string]$SupabaseConnectionString,
-    [Parameter(Mandatory = $false)]
-    [string]$WorkerSecret,
-    [Parameter(Mandatory = $false)]
-    [string]$GeminiApiKey,
-    [Parameter(Mandatory = $false)]
-    [string]$FirebaseDomain = "*"
-)
-
-Write-Host "=== Grid Cloud Run Deployment Runner ===" -ForegroundColor Cyan
-
-if (-not $ProjectId) {
-    $ProjectId = gcloud config get-value project 2>$null
-    if (-not $ProjectId) {
-        $ProjectId = Read-Host "Enter your Google Cloud Project ID"
+# Run: .\deploy\deploy-cloudrun.ps1 (all values come from the root .env).
+[CmdletBinding()]
+param()
+. (Join-Path $PSScriptRoot 'common.ps1')
+Initialize-GridDeployment
+Assert-GridProduction
+$cloud = Get-GridCloudConfig
+$connection = Get-GridSetting -Names @('ConnectionStrings__Default') -Required
+$secret = Get-GridSetting -Names @('GoogleCloud__WorkerSecret', 'GRID_WORKER_SECRET') -Required
+$certificate = Get-GridSetting -Names @('AuthServer__CertificatePassPhrase') -Required
+$apiKey = Get-GridSetting -Names @('Gemini__ApiKey', 'GEMINI_API_KEY')
+$model = Get-GridSetting -Names @('Gemini__Model', 'GEMINI_MODEL')
+$webUrl = Get-GridWebUrl $cloud
+$cors = Get-GridSetting -Names @('App__CorsOrigins') -Default $webUrl
+$tag = Get-GridSetting -Names @('GRID_IMAGE_TAG') -Default 'latest'
+$registry = "$($cloud.Region)-docker.pkg.dev"
+$prefix = "$registry/$($cloud.Project)/$($cloud.Repository)"
+$apiImage = "$prefix/grid-api:$tag"
+$workerImage = "$prefix/grid-worker:$tag"
+$apiMemory = Get-GridSetting -Names @('GRID_API_MEMORY') -Default '1Gi'
+$apiCpu = Get-GridSetting -Names @('GRID_API_CPU') -Default '1'
+$workerMemory = Get-GridSetting -Names @('GRID_WORKER_MEMORY') -Default '2Gi'
+$workerCpu = Get-GridSetting -Names @('GRID_WORKER_CPU') -Default '2'
+$workerMin = Get-GridSetting -Names @('GRID_WORKER_MIN_INSTANCES') -Default '1'
+$workerTimeout = Get-GridSetting -Names @('GRID_WORKER_TIMEOUT') -Default '600'
+$configuredApiUrl = Get-GridSetting -Names @('App__SelfUrl', 'VITE_API_URL', 'BACKEND_API_URL', 'GRID_API_URL')
+$authority = Get-GridSetting -Names @('AuthServer__Authority')
+$appClient = Get-GridSetting -Names @('OpenIddict__Applications__Grid_App__ClientId') -Default 'Grid_App'
+$swaggerClient = Get-GridSetting -Names @('OpenIddict__Applications__Grid_Swagger__ClientId') -Default 'Grid_Swagger'
+$null = Resolve-GridTool 'gcloud'
+$null = Resolve-GridTool 'docker'
+$apiFile = $null
+$workerFile = $null
+Push-Location $script:GridRoot
+try {
+    Write-Host "Deploying Cloud Run services in $($cloud.Project) / $($cloud.Region)."
+    Invoke-GridCommand 'gcloud' @('auth', 'configure-docker', $registry, '--quiet')
+    Invoke-GridCommand 'docker' @('build', '-f', 'deploy/api.Dockerfile', '-t', $apiImage, '.')
+    Invoke-GridCommand 'docker' @('push', $apiImage)
+    $apiEnv = @{
+        ASPNETCORE_ENVIRONMENT = 'Production'; GRID_ENV = 'Production'
+        ASPNETCORE_HTTP_PORTS = '8080'; ASPNETCORE_FORWARDEDHEADERS_ENABLED = 'true'
+        GoogleCloud__ProjectId = $cloud.Project; GoogleCloud__Bucket = $cloud.Bucket
+        GoogleCloud__ParserTopicId = $cloud.ParserTopic; GoogleCloud__DatasetTopicId = $cloud.DatasetTopic
+        GoogleCloud__WorkerSecret = $secret; ConnectionStrings__Default = $connection
+        App__CorsOrigins = $cors; AuthServer__RequireHttpsMetadata = 'true'
+        AuthServer__CertificatePassPhrase = $certificate
+        OpenIddict__Applications__Grid_App__ClientId = $appClient
+        OpenIddict__Applications__Grid_App__RootUrl = $webUrl
+        OpenIddict__Applications__Grid_Swagger__ClientId = $swaggerClient
     }
+    foreach ($key in $script:GridSettings.Keys) {
+        if ($key -cmatch '^(App__|AuthServer__|OpenIddict__|AiOptimization__)' -and
+            $script:GridSettings[$key] -ne '' -and -not $apiEnv.ContainsKey($key)) {
+            $apiEnv[$key] = $script:GridSettings[$key]
+        }
+    }
+    if ($apiKey) { $apiEnv['GEMINI_API_KEY'] = $apiKey; $apiEnv['Gemini__ApiKey'] = $apiKey }
+    if ($model) { $apiEnv['GEMINI_MODEL'] = $model; $apiEnv['Gemini__Model'] = $model }
+    if ($configuredApiUrl) {
+        $apiEnv['App__SelfUrl'] = $configuredApiUrl
+        $apiEnv['AuthServer__Authority'] = $(if ($authority) { $authority } else { $configuredApiUrl })
+        $apiEnv['OpenIddict__Applications__Grid_Swagger__RootUrl'] = Get-GridSetting -Names @('OpenIddict__Applications__Grid_Swagger__RootUrl') -Default $configuredApiUrl
+    } elseif ($authority) {
+        $apiEnv['AuthServer__Authority'] = $authority
+    }
+    $apiFile = New-GridEnvironmentFile $apiEnv
+    Invoke-GridCommand 'gcloud' @('run', 'deploy', $cloud.ApiService, "--project=$($cloud.Project)",
+        "--image=$apiImage", '--platform=managed', "--region=$($cloud.Region)", '--port=8080',
+        '--allow-unauthenticated', "--service-account=$($cloud.ApiAccount)", "--memory=$apiMemory", "--cpu=$apiCpu",
+        "--env-vars-file=$apiFile", '--quiet')
+    if (-not $configuredApiUrl) {
+        $apiUrl = Get-GridApiUrl $cloud
+        $apiEnv['App__SelfUrl'] = $apiUrl
+        $apiEnv['AuthServer__Authority'] = $(if ($authority) { $authority } else { $apiUrl })
+        $apiEnv['OpenIddict__Applications__Grid_Swagger__RootUrl'] = Get-GridSetting -Names @('OpenIddict__Applications__Grid_Swagger__RootUrl') -Default $apiUrl
+        Remove-Item -LiteralPath $apiFile -Force
+        $apiFile = New-GridEnvironmentFile $apiEnv
+        Invoke-GridCommand 'gcloud' @('run', 'services', 'update', $cloud.ApiService, "--project=$($cloud.Project)",
+            '--platform=managed', "--region=$($cloud.Region)", "--env-vars-file=$apiFile", '--quiet')
+    } else {
+        $apiUrl = $configuredApiUrl
+    }
+    Invoke-GridCommand 'docker' @('build', '-f', 'deploy/worker.Dockerfile', '-t', $workerImage, '.')
+    Invoke-GridCommand 'docker' @('push', $workerImage)
+    $workerFile = New-GridEnvironmentFile @{
+        GRID_ENV = 'Production'; GOOGLE_CLOUD_PROJECT = $cloud.Project; GCS_BUCKET = $cloud.Bucket
+        PUBSUB_PARSER_TOPIC = $cloud.ParserTopic; PUBSUB_PARSER_SUBSCRIPTION = $cloud.Subscription
+        BACKEND_API_URL = $apiUrl; GRID_API_URL = $apiUrl; GRID_WORKER_SECRET = $secret
+        PUBSUB_MODE = Get-GridSetting -Names @('PUBSUB_MODE') -Default 'auto'
+    }
+    Invoke-GridCommand 'gcloud' @('run', 'deploy', $cloud.WorkerService, "--project=$($cloud.Project)",
+        "--image=$workerImage", '--platform=managed', "--region=$($cloud.Region)", '--port=8080',
+        '--no-allow-unauthenticated', "--service-account=$($cloud.WorkerAccount)", "--memory=$workerMemory", "--cpu=$workerCpu",
+        '--no-cpu-throttling', "--min-instances=$workerMin", "--timeout=$workerTimeout", "--env-vars-file=$workerFile", '--quiet')
+    Write-Host "Cloud Run deployment completed. API URL: $apiUrl"
+} finally {
+    foreach ($file in @($apiFile, $workerFile)) {
+        if ($file -and (Test-Path -LiteralPath $file)) { Remove-Item -LiteralPath $file -Force }
+    }
+    Pop-Location
 }
-
-if (-not $WorkerSecret) {
-    $WorkerSecret = [System.Guid]::NewGuid().ToString("N") + [System.Guid]::NewGuid().ToString("N")
-    Write-Host "Generated random GRID_WORKER_SECRET: $WorkerSecret" -ForegroundColor Yellow
-}
-
-$RepoPrefix = "$Region-docker.pkg.dev/$ProjectId/grid-repo"
-$BucketName = "$ProjectId-grid-storage"
-$ApiImage = "$RepoPrefix/grid-api:latest"
-$WorkerImage = "$RepoPrefix/grid-worker:latest"
-$ApiSa = "grid-api-sa@$ProjectId.iam.gserviceaccount.com"
-$WorkerSa = "grid-worker-sa@$ProjectId.iam.gserviceaccount.com"
-
-# Authenticate Docker to Artifact Registry
-Write-Host "`nConfiguring Docker authentication..." -ForegroundColor Cyan
-gcloud auth configure-docker "$Region-docker.pkg.dev" --quiet
-
-# --- 1. BUILD & PUSH API ---
-Write-Host "`n[1/4] Building Grid API container..." -ForegroundColor Cyan
-docker build -f deploy/api.Dockerfile -t $ApiImage .
-if ($LASTEXITCODE -ne 0) { Write-Error "API build failed"; exit $LASTEXITCODE }
-
-Write-Host "Pushing API container to Artifact Registry..." -ForegroundColor Cyan
-docker push $ApiImage
-if ($LASTEXITCODE -ne 0) { Write-Error "API push failed"; exit $LASTEXITCODE }
-
-# --- 2. DEPLOY API TO CLOUD RUN ---
-Write-Host "`n[2/4] Deploying Grid API to Cloud Run..." -ForegroundColor Cyan
-$ApiEnvVars = @(
-    "ASPNETCORE_ENVIRONMENT=Production",
-    "ASPNETCORE_HTTP_PORTS=8080",
-    "ASPNETCORE_FORWARDEDHEADERS_ENABLED=true",
-    "GoogleCloud__ProjectId=$ProjectId",
-    "GoogleCloud__Bucket=$BucketName",
-    "GoogleCloud__ParserTopicId=grid-parser-runs",
-    "GoogleCloud__DatasetTopicId=grid-datasets",
-    "GoogleCloud__WorkerSecret=$WorkerSecret",
-    "App__CorsOrigins=$FirebaseDomain",
-    "AuthServer__RequireHttpsMetadata=true",
-    "AuthServer__CertificatePassPhrase=145683a4-f6fa-4ed2-833e-44b8bc9736d1"
-)
-if ($SupabaseConnectionString) {
-    $ApiEnvVars += "ConnectionStrings__Default=$SupabaseConnectionString"
-}
-if ($GeminiApiKey) {
-    $ApiEnvVars += "Gemini__ApiKey=$GeminiApiKey"
-}
-
-$ApiEnvString = $ApiEnvVars -join ","
-
-gcloud run deploy grid-api `
-    --image=$ApiImage `
-    --platform=managed `
-    --region=$Region `
-    --port=8080 `
-    --allow-unauthenticated `
-    --service-account=$ApiSa `
-    --memory=1Gi `
-    --cpu=1 `
-    --set-env-vars=$ApiEnvString
-
-$ApiUrl = gcloud run services describe grid-api --platform=managed --region=$Region --format="value(status.url)"
-Write-Host "Grid API deployed at: $ApiUrl" -ForegroundColor Green
-
-# Update AuthServer:Authority to match Cloud Run URL
-Write-Host "Updating API Authority & SelfUrl..." -ForegroundColor Cyan
-gcloud run services update grid-api `
-    --platform=managed `
-    --region=$Region `
-    --update-env-vars="AuthServer__Authority=$ApiUrl,App__SelfUrl=$ApiUrl"
-
-# --- 3. BUILD & PUSH WORKER ---
-Write-Host "`n[3/4] Building Grid ETL Worker container..." -ForegroundColor Cyan
-docker build -f deploy/worker.Dockerfile -t $WorkerImage .
-if ($LASTEXITCODE -ne 0) { Write-Error "Worker build failed"; exit $LASTEXITCODE }
-
-Write-Host "Pushing Worker container to Artifact Registry..." -ForegroundColor Cyan
-docker push $WorkerImage
-if ($LASTEXITCODE -ne 0) { Write-Error "Worker push failed"; exit $LASTEXITCODE }
-
-# --- 4. DEPLOY WORKER TO CLOUD RUN ---
-Write-Host "`n[4/4] Deploying Grid Worker to Cloud Run..." -ForegroundColor Cyan
-$WorkerEnvVars = @(
-    "GOOGLE_CLOUD_PROJECT=$ProjectId",
-    "GCS_BUCKET=$BucketName",
-    "PUBSUB_PARSER_TOPIC=grid-parser-runs",
-    "PUBSUB_PARSER_SUBSCRIPTION=grid-parser-runs-etl",
-    "BACKEND_API_URL=$ApiUrl",
-    "GRID_API_URL=$ApiUrl",
-    "GRID_WORKER_SECRET=$WorkerSecret",
-    "PUBSUB_MODE=auto"
-) -join ","
-
-gcloud run deploy grid-worker `
-    --image=$WorkerImage `
-    --platform=managed `
-    --region=$Region `
-    --port=8080 `
-    --no-allow-unauthenticated `
-    --service-account=$WorkerSa `
-    --memory=2Gi `
-    --cpu=2 `
-    --no-cpu-throttling `
-    --min-instances=1 `
-    --timeout=600 `
-    --set-env-vars=$WorkerEnvVars
-
-Write-Host "`nAll Cloud Run services deployed successfully!" -ForegroundColor Green
-Write-Host "API URL: $ApiUrl"
-Write-Host "Use this URL as VITE_API_URL when deploying the frontend to Firebase."

@@ -51,17 +51,24 @@ Both sets contain 28 transactions deliberately structured to test each capabilit
 - **Set 2 (November 2026)**:
   - `demo-data/set-2-november/sap_gl_november_2026.csv`
   - `demo-data/set-2-november/bank_stmt_november_2026.csv`
-- **Profiles**:
-  - `demo-data/profile-v1-baseline.json` (Starting baseline profile)
+- **Profiles & Bundles**:
+  - `demo-data/sap-gl-bank-bundle.json` (Complete 1-click provisioning bundle: datasets, parsers, & profile)
+  - `demo-data/profile-v1-baseline.json` (Starting baseline profile rules definition)
 
 ---
 
 ## 5. Step-by-Step Presentation Script
 
-### Step 1: Baseline Setup
-1. Navigate to `/configuration/manual/profiles` (or `/configuration/ai`).
-2. Create or verify two datasets: `SAP_GL` and `BANK_STMT`.
-3. Create profile **"SAP GL vs Bank Statement Reconciliation"** using `profile-v1-baseline.json` and click **Approve** (Profile version 1).
+### Step 1: Instant 1-Click Provisioning (or Baseline Setup)
+- **Option A (Instant 1-Click Provisioning — Recommended for Demos)**:
+  1. Go to `/configuration` and click the **Create from JSON** card (or click **Import JSON** on `/configuration/manual/profiles`).
+  2. Select `demo-data/sap-gl-bank-bundle.json` (or drag & drop / paste it).
+  3. Notice how the system previews the profile (`SAP GL vs Bank Statement Reconciliation`), attached canonical datasets (`SAP_GL`, `BANK_STMT`), and parser definitions (`SAP GL Parser`, `Bank Statement Parser`).
+  4. Click **Import & Open Studio** — datasets, parsers, package, and profile are created and linked in one atomic operation!
+- **Option B (Manual Setup)**:
+  1. Navigate to `/configuration/manual/profiles` (or `/configuration/ai`).
+  2. Create or verify two datasets: `SAP_GL` and `BANK_STMT`.
+  3. Create profile **"SAP GL vs Bank Statement Reconciliation"** using `profile-v1-baseline.json` and click **Approve** (Profile version 1).
 
 ### Step 2: Run Set 1 (October 2026)
 1. Go to `/reconciliation/runs/new`.

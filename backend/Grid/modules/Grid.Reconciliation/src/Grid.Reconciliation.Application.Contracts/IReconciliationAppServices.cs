@@ -38,6 +38,10 @@ public interface IProfileAppService : IApplicationService
     Task<ProfileDto> ApproveAsync(Guid id, SaveProfileDto input);
 
     Task DeleteAsync(Guid id);
+
+    Task<ProfileBundleDto> GetBundleAsync(Guid id);
+
+    Task<ProfileDto> ImportBundleAsync(ProfileBundleDto input);
 }
 
 public interface IRunAppService : IApplicationService

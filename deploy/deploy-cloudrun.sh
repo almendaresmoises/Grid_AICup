@@ -1,87 +1,101 @@
 #!/usr/bin/env bash
-set -e
-
-echo "=== Grid Cloud Run Deployment Runner (Bash / Cloud Shell) ==="
-
-PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null)}"
-REGION="${2:-us-central1}"
-SUPABASE_CONNECTION_STRING="${3}"
-WORKER_SECRET="${4:-$(openssl rand -base64 32)}"
-GEMINI_API_KEY="${5}"
-FIREBASE_DOMAIN="${6:-*}"
-
-if [ -z "$PROJECT_ID" ]; then
-    read -p "Enter your Google Cloud Project ID: " PROJECT_ID
-fi
-
-REPO_PREFIX="${REGION}-docker.pkg.dev/${PROJECT_ID}/grid-repo"
-BUCKET_NAME="${PROJECT_ID}-grid-storage"
-API_IMAGE="${REPO_PREFIX}/grid-api:latest"
-WORKER_IMAGE="${REPO_PREFIX}/grid-worker:latest"
-API_SA="grid-api-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-WORKER_SA="grid-worker-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-
-echo "Configuring Docker authentication..."
-gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-
-# --- 1. BUILD & PUSH API ---
-echo -e "\n[1/4] Building Grid API container..."
+# Run: bash deploy/deploy-cloudrun.sh. All values come from the root .env.
+set -euo pipefail
+[[ $# -eq 0 ]] || { printf '%s\n' 'Configure the repository .env instead of passing deployment arguments.' >&2; exit 1; }
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+grid_load_env
+grid_assert_production
+grid_cloud_config
+CONNECTION=$(grid_require ConnectionStrings__Default)
+WORKER_SECRET=$(grid_require GoogleCloud__WorkerSecret GRID_WORKER_SECRET)
+CERTIFICATE=$(grid_require AuthServer__CertificatePassPhrase)
+GEMINI_KEY=$(grid_get '' Gemini__ApiKey GEMINI_API_KEY)
+MODEL=$(grid_get '' Gemini__Model GEMINI_MODEL)
+WEB_URL=$(grid_web_url)
+CORS=$(grid_get "$WEB_URL" App__CorsOrigins)
+TAG=$(grid_get latest GRID_IMAGE_TAG)
+REGISTRY="$GRID_REGION-docker.pkg.dev"
+PREFIX="$REGISTRY/$GRID_PROJECT/$GRID_REPOSITORY"
+API_IMAGE="$PREFIX/grid-api:$TAG"
+WORKER_IMAGE="$PREFIX/grid-worker:$TAG"
+API_MEMORY=$(grid_get 1Gi GRID_API_MEMORY)
+API_CPU=$(grid_get 1 GRID_API_CPU)
+WORKER_MEMORY=$(grid_get 2Gi GRID_WORKER_MEMORY)
+WORKER_CPU=$(grid_get 2 GRID_WORKER_CPU)
+WORKER_MIN=$(grid_get 1 GRID_WORKER_MIN_INSTANCES)
+WORKER_TIMEOUT=$(grid_get 600 GRID_WORKER_TIMEOUT)
+CONFIGURED_URL=$(grid_get '' App__SelfUrl VITE_API_URL BACKEND_API_URL GRID_API_URL)
+AUTHORITY=$(grid_get '' AuthServer__Authority)
+APP_CLIENT=$(grid_get Grid_App OpenIddict__Applications__Grid_App__ClientId)
+SWAGGER_CLIENT=$(grid_get Grid_Swagger OpenIddict__Applications__Grid_Swagger__ClientId)
+PUBSUB_MODE_VALUE=$(grid_get auto PUBSUB_MODE)
+SWAGGER_URL=$(grid_get '' OpenIddict__Applications__Grid_Swagger__RootUrl)
+grid_tool gcloud
+grid_tool docker
+API_ENV_FILE=''
+WORKER_ENV_FILE=''
+cleanup() {
+    [[ -z "$API_ENV_FILE" ]] || rm -f -- "$API_ENV_FILE"
+    [[ -z "$WORKER_ENV_FILE" ]] || rm -f -- "$WORKER_ENV_FILE"
+}
+trap cleanup EXIT
+cd -- "$GRID_ROOT"
+printf 'Deploying Cloud Run services in %s / %s.\n' "$GRID_PROJECT" "$GRID_REGION"
+gcloud auth configure-docker "$REGISTRY" --quiet
 docker build -f deploy/api.Dockerfile -t "$API_IMAGE" .
-echo "Pushing API container..."
 docker push "$API_IMAGE"
-
-# --- 2. DEPLOY API TO CLOUD RUN ---
-echo -e "\n[2/4] Deploying Grid API to Cloud Run..."
-ENV_VARS="ASPNETCORE_ENVIRONMENT=Production,ASPNETCORE_HTTP_PORTS=8080,ASPNETCORE_FORWARDEDHEADERS_ENABLED=true,GoogleCloud__ProjectId=${PROJECT_ID},GoogleCloud__Bucket=${BUCKET_NAME},GoogleCloud__ParserTopicId=grid-parser-runs,GoogleCloud__DatasetTopicId=grid-datasets,GoogleCloud__WorkerSecret=${WORKER_SECRET},App__CorsOrigins=${FIREBASE_DOMAIN},AuthServer__RequireHttpsMetadata=true,AuthServer__CertificatePassPhrase=145683a4-f6fa-4ed2-833e-44b8bc9736d1"
-
-if [ -n "$SUPABASE_CONNECTION_STRING" ]; then
-    ENV_VARS="${ENV_VARS},ConnectionStrings__Default=${SUPABASE_CONNECTION_STRING}"
+API_BASE=(
+    ASPNETCORE_ENVIRONMENT Production GRID_ENV Production
+    ASPNETCORE_HTTP_PORTS 8080 ASPNETCORE_FORWARDEDHEADERS_ENABLED true
+    GoogleCloud__ProjectId "$GRID_PROJECT" GoogleCloud__Bucket "$GRID_BUCKET"
+    GoogleCloud__ParserTopicId "$GRID_PARSER_TOPIC" GoogleCloud__DatasetTopicId "$GRID_DATASET_TOPIC"
+    GoogleCloud__WorkerSecret "$WORKER_SECRET" ConnectionStrings__Default "$CONNECTION"
+    App__CorsOrigins "$CORS" AuthServer__RequireHttpsMetadata true AuthServer__CertificatePassPhrase "$CERTIFICATE"
+    OpenIddict__Applications__Grid_App__ClientId "$APP_CLIENT"
+    OpenIddict__Applications__Grid_App__RootUrl "$WEB_URL"
+    OpenIddict__Applications__Grid_Swagger__ClientId "$SWAGGER_CLIENT"
+)
+for key in "${!GRID_DEPLOY_ENV[@]}"; do
+    case "$key" in
+        App__*|AuthServer__*|OpenIddict__*|AiOptimization__*)
+            case "$key" in
+                App__CorsOrigins|App__SelfUrl|AuthServer__Authority|AuthServer__RequireHttpsMetadata|AuthServer__CertificatePassPhrase|OpenIddict__Applications__Grid_App__ClientId|OpenIddict__Applications__Grid_App__RootUrl|OpenIddict__Applications__Grid_Swagger__ClientId|OpenIddict__Applications__Grid_Swagger__RootUrl) continue ;;
+            esac
+            if [[ -n "${GRID_DEPLOY_ENV[$key]}" ]]; then API_BASE+=("$key" "${GRID_DEPLOY_ENV[$key]}"); fi
+            ;;
+    esac
+done
+if [[ -n "$GEMINI_KEY" ]]; then API_BASE+=(GEMINI_API_KEY "$GEMINI_KEY" Gemini__ApiKey "$GEMINI_KEY"); fi
+if [[ -n "$MODEL" ]]; then API_BASE+=(GEMINI_MODEL "$MODEL" Gemini__Model "$MODEL"); fi
+INITIAL=("${API_BASE[@]}")
+if [[ -n "$CONFIGURED_URL" ]]; then
+    INITIAL+=(App__SelfUrl "$CONFIGURED_URL" AuthServer__Authority "${AUTHORITY:-$CONFIGURED_URL}" OpenIddict__Applications__Grid_Swagger__RootUrl "${SWAGGER_URL:-$CONFIGURED_URL}")
+elif [[ -n "$AUTHORITY" ]]; then
+    INITIAL+=(AuthServer__Authority "$AUTHORITY")
 fi
-if [ -n "$GEMINI_API_KEY" ]; then
-    ENV_VARS="${ENV_VARS},Gemini__ApiKey=${GEMINI_API_KEY}"
+API_ENV_FILE=$(grid_env_file "${INITIAL[@]}")
+gcloud run deploy "$GRID_API_SERVICE" --project="$GRID_PROJECT" --image="$API_IMAGE" \
+    --platform=managed --region="$GRID_REGION" --port=8080 --allow-unauthenticated \
+    --service-account="$GRID_API_ACCOUNT" --memory="$API_MEMORY" --cpu="$API_CPU" \
+    --env-vars-file="$API_ENV_FILE" --quiet
+if [[ -z "$CONFIGURED_URL" ]]; then
+    API_URL=$(grid_api_url)
+    rm -f -- "$API_ENV_FILE"
+    API_ENV_FILE=$(grid_env_file "${API_BASE[@]}" App__SelfUrl "$API_URL" \
+        AuthServer__Authority "${AUTHORITY:-$API_URL}" OpenIddict__Applications__Grid_Swagger__RootUrl "${SWAGGER_URL:-$API_URL}")
+    gcloud run services update "$GRID_API_SERVICE" --project="$GRID_PROJECT" --platform=managed \
+        --region="$GRID_REGION" --env-vars-file="$API_ENV_FILE" --quiet
+else
+    API_URL="$CONFIGURED_URL"
 fi
-
-gcloud run deploy grid-api \
-    --image="$API_IMAGE" \
-    --platform=managed \
-    --region="$REGION" \
-    --port=8080 \
-    --allow-unauthenticated \
-    --service-account="$API_SA" \
-    --memory=1Gi \
-    --cpu=1 \
-    --set-env-vars="$ENV_VARS"
-
-API_URL=$(gcloud run services describe grid-api --platform=managed --region="$REGION" --format="value(status.url)")
-echo "Grid API deployed at: $API_URL"
-
-gcloud run services update grid-api \
-    --platform=managed \
-    --region="$REGION" \
-    --update-env-vars="AuthServer__Authority=${API_URL},App__SelfUrl=${API_URL}"
-
-# --- 3. BUILD & PUSH WORKER ---
-echo -e "\n[3/4] Building Grid ETL Worker container..."
 docker build -f deploy/worker.Dockerfile -t "$WORKER_IMAGE" .
 docker push "$WORKER_IMAGE"
-
-# --- 4. DEPLOY WORKER TO CLOUD RUN ---
-echo -e "\n[4/4] Deploying Grid Worker to Cloud Run..."
-WORKER_ENV_VARS="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET=${BUCKET_NAME},PUBSUB_PARSER_TOPIC=grid-parser-runs,PUBSUB_PARSER_SUBSCRIPTION=grid-parser-runs-etl,BACKEND_API_URL=${API_URL},GRID_API_URL=${API_URL},GRID_WORKER_SECRET=${WORKER_SECRET},PUBSUB_MODE=auto"
-
-gcloud run deploy grid-worker \
-    --image="$WORKER_IMAGE" \
-    --platform=managed \
-    --region="$REGION" \
-    --port=8080 \
-    --no-allow-unauthenticated \
-    --service-account="$WORKER_SA" \
-    --memory=2Gi \
-    --cpu=2 \
-    --no-cpu-throttling \
-    --min-instances=1 \
-    --timeout=600 \
-    --set-env-vars="$WORKER_ENV_VARS"
-
-echo -e "\nAll Cloud Run services deployed successfully!"
-echo "API URL: $API_URL"
+WORKER_ENV_FILE=$(grid_env_file GRID_ENV Production GOOGLE_CLOUD_PROJECT "$GRID_PROJECT" GCS_BUCKET "$GRID_BUCKET" \
+    PUBSUB_PARSER_TOPIC "$GRID_PARSER_TOPIC" PUBSUB_PARSER_SUBSCRIPTION "$GRID_SUBSCRIPTION" \
+    BACKEND_API_URL "$API_URL" GRID_API_URL "$API_URL" GRID_WORKER_SECRET "$WORKER_SECRET" PUBSUB_MODE "$PUBSUB_MODE_VALUE")
+gcloud run deploy "$GRID_WORKER_SERVICE" --project="$GRID_PROJECT" --image="$WORKER_IMAGE" \
+    --platform=managed --region="$GRID_REGION" --port=8080 --no-allow-unauthenticated \
+    --service-account="$GRID_WORKER_ACCOUNT" --memory="$WORKER_MEMORY" --cpu="$WORKER_CPU" \
+    --no-cpu-throttling --min-instances="$WORKER_MIN" --timeout="$WORKER_TIMEOUT" \
+    --env-vars-file="$WORKER_ENV_FILE" --quiet
+printf 'Cloud Run deployment completed. API URL: %s\n' "$API_URL"

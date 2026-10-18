@@ -1,12 +1,14 @@
 import { Button } from "@workspace/ui/components/button"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, ChevronDown, ChevronRight, Database, Eye, Loader2, Pencil, Plus, Search, ShieldCheck, Sparkles, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronRight, Database, Download, Eye, Loader2, Pencil, Plus, Search, ShieldCheck, Sparkles, Trash2, Upload } from "lucide-react"
 import { Fragment, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { ErrorNote } from "@/components/error-note"
 import { Modal } from "@/components/modal"
 import { OriginCell } from "@/components/origin-cell"
+import { ImportProfileBundleModal } from "@/components/import-profile-bundle-modal"
 import { api } from "@/lib/api"
+import { exportProfileBundle } from "@/lib/profile-bundle"
 import {
   getProfileStatuses,
   reconciliationAnalysisKeys,
@@ -21,12 +23,25 @@ export function PackagesPage() {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState("")
   const [creating, setCreating] = useState(false)
+  const [isImportOpen, setIsImportOpen] = useState(false)
+  const [exportingId, setExportingId] = useState<string | null>(null)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [drilldownItem, setDrilldownItem] = useState<{ package: Package; profile?: Profile } | null>(null)
   const [analyzeTarget, setAnalyzeTarget] = useState<{ package: Package; summary?: ProfileAnalysisSummary } | null>(null)
   const [analyzeContext, setAnalyzeContext] = useState("")
+
+  const handleExport = async (profileId: string, profileName?: string) => {
+    try {
+      setExportingId(profileId)
+      await exportProfileBundle(profileId, profileName)
+    } catch (err) {
+      console.error("Failed to export profile bundle", err)
+    } finally {
+      setExportingId(null)
+    }
+  }
 
   const packages = useQuery({
     queryKey: ["packages"],
@@ -119,10 +134,16 @@ export function PackagesPage() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
         <p className="text-muted-foreground text-sm">Matching profiles, the datasets they use, and the rule passes that run in order.</p>
-        <Button size="sm" type="button" onClick={() => setCreating(true)}>
-          <Plus />
-          Create profile
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" type="button" onClick={() => setIsImportOpen(true)}>
+            <Upload className="size-3.5" />
+            Import JSON
+          </Button>
+          <Button size="sm" type="button" onClick={() => setCreating(true)}>
+            <Plus className="size-3.5" />
+            Create profile
+          </Button>
+        </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         <Stat label="Profiles" value={packages.data?.length ?? 0} />
@@ -276,8 +297,18 @@ export function PackagesPage() {
                           >
                             <Eye />
                           </Button>
-                          <Button variant="ghost" size="icon-sm" aria-label={`Edit ${item.name}`} title="Edit profile" render={<Link to={`/reconciliation/profiles/${item.profileId}`} />}>
+                          <Button variant="ghost" size="icon-sm" nativeButton={false} aria-label={`Edit ${item.name}`} title="Edit profile" render={<Link to={`/reconciliation/profiles/${item.profileId}`} />}>
                             <Pencil />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Export ${item.name} JSON bundle`}
+                            title="Export JSON bundle"
+                            disabled={exportingId === item.profileId}
+                            onClick={() => handleExport(item.profileId, item.name)}
+                          >
+                            {exportingId === item.profileId ? <Loader2 className="animate-spin" /> : <Download />}
                           </Button>
                           <Button
                             variant="ghost"
@@ -345,13 +376,29 @@ export function PackagesPage() {
                 Close
               </Button>
               {drilldownItem ? (
-                <Button
-                  size="sm"
-                  render={<Link to={`/reconciliation/profiles/${drilldownItem.package.profileId}`} />}
-                >
-                  <Pencil className="size-3.5" />
-                  Edit in Studio
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={exportingId === drilldownItem.package.profileId}
+                    onClick={() => handleExport(drilldownItem.package.profileId, drilldownItem.package.name)}
+                  >
+                    {exportingId === drilldownItem.package.profileId ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Download className="size-3.5" />
+                    )}
+                    Export JSON
+                  </Button>
+                  <Button
+                    size="sm"
+                    nativeButton={false}
+                    render={<Link to={`/reconciliation/profiles/${drilldownItem.package.profileId}`} />}
+                  >
+                    <Pencil className="size-3.5" />
+                    Edit in Studio
+                  </Button>
+                </>
               ) : null}
             </div>
           </div>
@@ -507,6 +554,11 @@ export function PackagesPage() {
           </div>
         )}
       </Modal>
+
+      <ImportProfileBundleModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+      />
     </div>
   )
 }

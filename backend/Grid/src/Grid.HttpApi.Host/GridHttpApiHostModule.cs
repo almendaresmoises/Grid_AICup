@@ -192,10 +192,14 @@ public class GridHttpApiHostModule : AbpModule
 
     private void ConfigureUrls(IConfiguration configuration)
     {
+        var selfUrl = !string.IsNullOrWhiteSpace(configuration["App:SelfUrl"])
+            ? configuration["App:SelfUrl"]
+            : "http://localhost:44344";
+
         Configure<AppUrlOptions>(options =>
         {
-            options.Applications["MVC"].RootUrl = configuration["App:SelfUrl"];
-            options.RedirectAllowedUrls.AddRange(configuration["App:RedirectAllowedUrls"]?.Split(',') ?? Array.Empty<string>());
+            options.Applications["MVC"].RootUrl = selfUrl;
+            options.RedirectAllowedUrls.AddRange(configuration["App:RedirectAllowedUrls"]?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>());
         });
     }
 
@@ -255,7 +259,13 @@ public class GridHttpApiHostModule : AbpModule
 
     private static void ConfigureSwagger(ServiceConfigurationContext context, IConfiguration configuration)
     {
-        var authority = configuration["AuthServer:Authority"] ?? configuration["App:SelfUrl"] ?? "http://localhost:44344";
+        var authority = new[]
+        {
+            configuration["AuthServer:Authority"],
+            configuration["App:SelfUrl"],
+            "http://localhost:44344"
+        }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s) && Uri.TryCreate(s, UriKind.Absolute, out _)) ?? "http://localhost:44344";
+
         context.Services.AddAbpSwaggerGenWithOidc(
             authority,
             ["Grid"],

@@ -1,43 +1,29 @@
-param (
-    [Parameter(Mandatory = $false)]
-    [string]$ApiUrl,
-    [Parameter(Mandatory = $false)]
-    [string]$FirebaseProjectId
-)
-
-Write-Host "=== Grid Firebase Web Deployment Runner ===" -ForegroundColor Cyan
-
-if (-not $ApiUrl) {
-    $ApiUrl = Read-Host "Enter the deployed Cloud Run API URL (e.g. https://grid-api-xyz.a.run.app)"
-}
-
-if (-not $ApiUrl) {
-    Write-Error "API URL is required for frontend production build."
-    exit 1
-}
-
-Write-Host "Target API URL: $ApiUrl" -ForegroundColor Green
-
-$env:VITE_API_URL = $ApiUrl
-
-Write-Host "`n[1/2] Building Vite React Web App for Production..." -ForegroundColor Cyan
-npm --prefix apps/web run build
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Frontend build failed."
-    exit $LASTEXITCODE
-}
-
-Write-Host "`n[2/2] Deploying to Firebase Hosting..." -ForegroundColor Cyan
-if ($FirebaseProjectId) {
-    firebase deploy --only hosting --project $FirebaseProjectId
-} else {
-    firebase deploy --only hosting
-}
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "`nFrontend successfully deployed to Firebase Hosting!" -ForegroundColor Green
-} else {
-    Write-Error "`nFirebase deployment failed."
-    exit $LASTEXITCODE
+# Run: .\deploy\deploy-firebase.ps1 (all values come from the root .env).
+[CmdletBinding()]
+param()
+. (Join-Path $PSScriptRoot 'common.ps1')
+Initialize-GridDeployment
+Assert-GridProduction
+$cloud = Get-GridCloudConfig
+$apiUrl = Get-GridApiUrl $cloud
+$null = Resolve-GridTool 'npm'
+$null = Resolve-GridTool 'firebase'
+$previous = @{}
+Push-Location $script:GridRoot
+try {
+    foreach ($key in $script:GridSettings.Keys) {
+        if ($key.StartsWith('VITE_')) {
+            $previous[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+            [Environment]::SetEnvironmentVariable($key, $script:GridSettings[$key], 'Process')
+        }
+    }
+    if (-not $previous.ContainsKey('VITE_API_URL')) { $previous['VITE_API_URL'] = $env:VITE_API_URL }
+    $env:VITE_API_URL = $apiUrl
+    Write-Host "Building frontend for $($cloud.FirebaseProject). API URL: $apiUrl"
+    Invoke-GridCommand 'npm' @('--prefix', 'apps/web', 'run', 'build')
+    Invoke-GridCommand 'firebase' @('deploy', '--only', 'hosting', '--project', $cloud.FirebaseProject, '--non-interactive')
+    Write-Host 'Firebase Hosting deployment completed.'
+} finally {
+    foreach ($key in $previous.Keys) { [Environment]::SetEnvironmentVariable($key, $previous[$key], 'Process') }
+    Pop-Location
 }

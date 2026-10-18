@@ -38,7 +38,7 @@ public static class DotEnv
                 value = value[1..^1];
             }
 
-            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
+            if (!string.IsNullOrWhiteSpace(value) && string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
             {
                 Environment.SetEnvironmentVariable(key, value);
             }

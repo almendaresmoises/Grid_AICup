@@ -38,6 +38,47 @@ export type Profile = {
   createdWithAi?: boolean
 }
 
+export type BundlePackage = {
+  name: string
+  description?: string | null
+}
+
+export type BundleProfile = {
+  name: string
+  description?: string | null
+  version: number
+  status: string
+  definitionJson: string
+  createdWithAi?: boolean
+}
+
+export type BundleDataset = {
+  code: string
+  name: string
+  description?: string
+  gcsPrefix: string
+  schemaColumnsJson: string
+  partitionColumnsJson?: string
+}
+
+export type BundleParser = {
+  name: string
+  fileFormat: string
+  pipelineJson: string
+  outputGcsPrefix: string
+  isActive: boolean
+  createdWithAi?: boolean
+}
+
+export type ProfileBundle = {
+  formatVersion: number
+  exportedAt?: string
+  package?: BundlePackage | null
+  profile: BundleProfile
+  datasets: BundleDataset[]
+  parsers: BundleParser[]
+}
+
 export type KeySpec = {
   type: "text" | "amount" | "date"
   fields: Record<string, string>
