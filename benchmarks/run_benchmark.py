@@ -175,86 +175,101 @@ def run_benchmark():
         },
     ]
 
+    checkpoint_path = RESULTS_DIR / "trials_checkpoint.json"
     trials_data = []
+    if checkpoint_path.exists():
+        try:
+            trials_data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            print(f"Loaded {len(trials_data)} prior trial records from {checkpoint_path}")
+        except Exception:
+            trials_data = []
+
     summary_data = {}
 
     for sc in scenarios:
         tier = sc["tier"]
         name = sc["name"]
-        print(f"\n--- Setting up Scenario: {name} ---")
-
-        # Import bundle
-        setup = client.import_bundle(sc["bundle_file"])
-        profile_id = setup["profile"]["id"]
-        parsers = setup["parsers"]
-
-        # Match parsers
-        gl_parser = next((p for p in parsers if p["name"] == sc["gl_parser_name"]), None)
-        bank_parser = next((p for p in parsers if p["name"] == sc["bank_parser_name"]), None)
-
-        if not gl_parser or not bank_parser:
-            raise RuntimeError(f"Could not find parsers for {tier}: gl={gl_parser}, bank={bank_parser}")
-
-        gl_parser_id = gl_parser["id"]
-        bank_parser_id = bank_parser["id"]
-        print(f"Profile ID: {profile_id}")
-        print(f"GL Parser ID: {gl_parser_id} | Bank Parser ID: {bank_parser_id}")
-
-        tier_trials = []
-        # Run 1 Warmup + 3 Measured Trials
         num_trials = 3
-        for trial_no in range(1, num_trials + 1):
-            print(f"\n[Scenario: {tier.upper()}] Starting Trial {trial_no} of {num_trials}...")
-            
-            # Stage 1: Upload & Concurrent Worker Parsing
-            t_stage1_start = time.perf_counter()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                f_gl = executor.submit(client.upload_and_parse, gl_parser_id, SAP_GL_FILE)
-                f_bank = executor.submit(client.upload_and_parse, bank_parser_id, BANK_STMT_FILE)
+
+        tier_trials = [t for t in trials_data if t["scenario"] == tier]
+        if len(tier_trials) >= num_trials:
+            print(f"\n--- Scenario: {name} (Reusing {len(tier_trials)} completed trials from checkpoint) ---")
+        else:
+            print(f"\n--- Setting up Scenario: {name} ---")
+            # Re-authenticate before each scenario
+            client.login()
+
+            # Import bundle
+            setup = client.import_bundle(sc["bundle_file"])
+            profile_id = setup["profile"]["id"]
+            parsers = setup["parsers"]
+
+            # Match parsers
+            gl_parser = next((p for p in parsers if p["name"] == sc["gl_parser_name"]), None)
+            bank_parser = next((p for p in parsers if p["name"] == sc["bank_parser_name"]), None)
+
+            if not gl_parser or not bank_parser:
+                raise RuntimeError(f"Could not find parsers for {tier}: gl={gl_parser}, bank={bank_parser}")
+
+            gl_parser_id = gl_parser["id"]
+            bank_parser_id = bank_parser["id"]
+            print(f"Profile ID: {profile_id}")
+            print(f"GL Parser ID: {gl_parser_id} | Bank Parser ID: {bank_parser_id}")
+
+            start_trial = len(tier_trials) + 1
+            for trial_no in range(start_trial, num_trials + 1):
+                print(f"\n[Scenario: {tier.upper()}] Starting Trial {trial_no} of {num_trials}...")
                 
-                run_id_gl, dur_gl = f_gl.result()
-                run_id_bank, dur_bank = f_bank.result()
-            t_stage1_end = time.perf_counter()
-            parse_stage_duration = t_stage1_end - t_stage1_start
+                # Stage 1: Upload & Concurrent Worker Parsing
+                t_stage1_start = time.perf_counter()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    f_gl = executor.submit(client.upload_and_parse, gl_parser_id, SAP_GL_FILE)
+                    f_bank = executor.submit(client.upload_and_parse, bank_parser_id, BANK_STMT_FILE)
+                    
+                    run_id_gl, dur_gl = f_gl.result()
+                    run_id_bank, dur_bank = f_bank.result()
+                t_stage1_end = time.perf_counter()
+                parse_stage_duration = t_stage1_end - t_stage1_start
 
-            print(f"  Stage 1 (Upload & Parse): {parse_stage_duration:.2f}s (GL: {dur_gl:.2f}s, Bank: {dur_bank:.2f}s)")
+                print(f"  Stage 1 (Upload & Parse): {parse_stage_duration:.2f}s (GL: {dur_gl:.2f}s, Bank: {dur_bank:.2f}s)")
 
-            # Stage 2: Reconciliation & DB Persistence
-            t_stage2_start = time.perf_counter()
-            recon_result, recon_duration = client.reconcile(
-                profile_id,
-                {sc["gl_code"]: run_id_gl, sc["bank_code"]: run_id_bank},
-            )
-            t_stage2_end = time.perf_counter()
+                # Stage 2: Reconciliation & DB Persistence
+                t_stage2_start = time.perf_counter()
+                recon_result, recon_duration = client.reconcile(
+                    profile_id,
+                    {sc["gl_code"]: run_id_gl, sc["bank_code"]: run_id_bank},
+                )
+                t_stage2_end = time.perf_counter()
 
-            total_duration = parse_stage_duration + recon_duration
-            throughput_overall = 100000.0 / total_duration if total_duration > 0 else 0
-            throughput_recon = 100000.0 / recon_duration if recon_duration > 0 else 0
+                total_duration = parse_stage_duration + recon_duration
+                throughput_overall = 100000.0 / total_duration if total_duration > 0 else 0
+                throughput_recon = 100000.0 / recon_duration if recon_duration > 0 else 0
 
-            print(f"  Stage 2 (Reconciliation & Persistence): {recon_duration:.2f}s")
-            print(f"  Total End-to-End Elapsed: {total_duration:.2f}s")
-            print(f"  Reconciliation Throughput: {throughput_recon:,.0f} records/sec (E2E: {throughput_overall:,.0f} rec/s)")
-            print(f"  Outcome: Total={recon_result['totalRecords']:,} | Matched={recon_result['matchedRecords']:,} | Unmatched={recon_result['unresolvedRecords']:,} | Groups={recon_result['matchedGroups']:,}")
+                print(f"  Stage 2 (Reconciliation & Persistence): {recon_duration:.2f}s")
+                print(f"  Total End-to-End Elapsed: {total_duration:.2f}s")
+                print(f"  Reconciliation Throughput: {throughput_recon:,.0f} records/sec (E2E: {throughput_overall:,.0f} rec/s)")
+                print(f"  Outcome: Total={recon_result['totalRecords']:,} | Matched={recon_result['matchedRecords']:,} | Unmatched={recon_result['unresolvedRecords']:,} | Groups={recon_result['matchedGroups']:,}")
 
-            trial_record = {
-                "scenario": tier,
-                "trial": trial_no,
-                "total_records": 100000,
-                "parse_duration_sec": round(parse_stage_duration, 3),
-                "gl_parse_sec": round(dur_gl, 3),
-                "bank_parse_sec": round(dur_bank, 3),
-                "recon_duration_sec": round(recon_duration, 3),
-                "total_duration_sec": round(total_duration, 3),
-                "recon_throughput_rps": round(throughput_recon, 1),
-                "overall_throughput_rps": round(throughput_overall, 1),
-                "matched_records": recon_result.get("matchedRecords", 0),
-                "unresolved_records": recon_result.get("unresolvedRecords", 0),
-                "ambiguous_records": recon_result.get("ambiguousRecords", 0),
-                "matched_groups": recon_result.get("matchedGroups", 0),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            trials_data.append(trial_record)
-            tier_trials.append(trial_record)
+                trial_record = {
+                    "scenario": tier,
+                    "trial": trial_no,
+                    "total_records": 100000,
+                    "parse_duration_sec": round(parse_stage_duration, 3),
+                    "gl_parse_sec": round(dur_gl, 3),
+                    "bank_parse_sec": round(dur_bank, 3),
+                    "recon_duration_sec": round(recon_duration, 3),
+                    "total_duration_sec": round(total_duration, 3),
+                    "recon_throughput_rps": round(throughput_recon, 1),
+                    "overall_throughput_rps": round(throughput_overall, 1),
+                    "matched_records": recon_result.get("matchedRecords", 0),
+                    "unresolved_records": recon_result.get("unresolvedRecords", 0),
+                    "ambiguous_records": recon_result.get("ambiguousRecords", 0),
+                    "matched_groups": recon_result.get("matchedGroups", 0),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                trials_data.append(trial_record)
+                tier_trials.append(trial_record)
+                checkpoint_path.write_text(json.dumps(trials_data, indent=2), encoding="utf-8")
 
         # Compute Scenario Summary
         recon_times = [t["recon_duration_sec"] for t in tier_trials]
