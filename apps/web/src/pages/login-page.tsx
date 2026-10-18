@@ -31,10 +31,9 @@ export function LoginPage() {
         }}
       >
         <div>
-          <h1 className="text-xl font-medium">GRID</h1>
+          <h1 className="text-xl font-medium">ReconGrid</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            The seeded administrator is <span className="font-mono">admin</span> /{" "}
-            <span className="font-mono">1q2w3E*</span>
+
           </p>
         </div>
         {error ? <ErrorNote message={error} /> : null}

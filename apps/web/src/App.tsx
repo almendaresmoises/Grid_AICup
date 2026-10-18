@@ -11,6 +11,7 @@ import { PackagesPage } from "@/pages/packages-page"
 import { ParserEditorPage } from "@/pages/parser-editor-page"
 import { ParsersPage } from "@/pages/parsers-page"
 import { ProfilePage } from "@/pages/profile-page"
+import { ReconciliationAnalysisPage } from "@/pages/reconciliation-analysis-page"
 import { RunGridPage } from "@/pages/run-grid-page"
 import { RunPage } from "@/pages/run-page"
 import { RunsPage } from "@/pages/runs-page"
@@ -39,6 +40,10 @@ export function App() {
         <Route
           path="/reconciliation/profiles/:profileId"
           element={<ProfilePage />}
+        />
+        <Route
+          path="/reconciliation/profiles/:profileId/analyses/:analysisId"
+          element={<ReconciliationAnalysisPage />}
         />
         <Route path="/configuration" element={<ConfigurationPage />} />
         <Route path="/configuration/ai" element={<AiConfigurePage />} />

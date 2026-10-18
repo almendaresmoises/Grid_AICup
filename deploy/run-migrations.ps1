@@ -23,11 +23,18 @@ Write-Host "Web Root URL: $WebAppUrl" -ForegroundColor Yellow
 Write-Host "API Root URL: $ApiUrl" -ForegroundColor Yellow
 
 $env:ConnectionStrings__Default = $ConnectionString
+$env:OpenIddict__Applications__Grid_App__ClientId = "Grid_App"
 $env:OpenIddict__Applications__Grid_App__RootUrl = $WebAppUrl
+$env:OpenIddict__Applications__Grid_Swagger__ClientId = "Grid_Swagger"
 $env:OpenIddict__Applications__Grid_Swagger__RootUrl = $ApiUrl
 
 Write-Host "`nRunning Grid.DbMigrator against Supabase..." -ForegroundColor Cyan
-dotnet run --project backend/Grid/src/Grid.DbMigrator/Grid.DbMigrator.csproj -c Release
+Push-Location backend/Grid/src/Grid.DbMigrator
+try {
+    dotnet run -c Release
+} finally {
+    Pop-Location
+}
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nDatabase migrations & initial seeders completed successfully!" -ForegroundColor Green

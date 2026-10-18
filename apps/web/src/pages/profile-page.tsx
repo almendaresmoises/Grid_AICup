@@ -7,13 +7,17 @@ import {
   Database,
   Pencil,
   Plus,
+  Sparkles,
   Trash2,
 } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
+import { ConfigurationReadiness } from "@/components/configuration-readiness"
 import { ErrorNote } from "@/components/error-note"
 import { Modal } from "@/components/modal"
 import { api } from "@/lib/api"
+import { getProfileStatuses, reconciliationAnalysisKeys } from "@/lib/reconciliation-analysis"
+import type { ConfigurationJob } from "@/lib/ai-configuration"
 import {
   emptyProfile,
   parseProfile,
@@ -42,6 +46,12 @@ export function ProfilePage() {
     queryKey: ["runs", profileId],
     queryFn: () => api<RunSummary[]>(`/api/app/run?profileId=${profileId}`),
   })
+  const profileAnalysisStatus = useQuery({
+    queryKey: reconciliationAnalysisKeys.profileStatuses([profileId]),
+    enabled: Boolean(profileId),
+    queryFn: () => getProfileStatuses([profileId]),
+  })
+  const analysisSummary = profileAnalysisStatus.data?.[0]
   const [spec, setSpec] = useState<ProfileSpec>(emptyProfile())
   const [mapping, setMapping] = useState(false)
   const [editing, setEditing] = useState<number | "new" | null>(null)
@@ -81,6 +91,7 @@ export function ProfilePage() {
       await queryClient.invalidateQueries({ queryKey: ["profile", profileId] })
       await queryClient.invalidateQueries({ queryKey: ["packages"] })
       await queryClient.invalidateQueries({ queryKey: ["profile-registry"] })
+      await queryClient.invalidateQueries({ queryKey: ["configuration-validation"] })
     },
     onError: (caught) =>
       setError(caught instanceof Error ? caught.message : "Save failed"),
@@ -99,11 +110,19 @@ export function ProfilePage() {
       setError(caught instanceof Error ? caught.message : "Delete failed"),
   })
   const propose = useMutation({
-    mutationFn: () =>
-      api<{ definitionJson: string }>("/api/app/assistant/propose", {
+    mutationFn: async () => {
+      const multiParserRunIds: Record<string, string[]> = {}
+      if (profile.data?.aiConfigurationId) {
+        const job = await api<ConfigurationJob>(`/api/app/ai-configuration/${profile.data.aiConfigurationId}`)
+        for (const file of job.files) {
+          (multiParserRunIds[file.datasetCode] ||= []).push(file.runId)
+        }
+      }
+      return api<{ definitionJson: string }>("/api/app/assistant/propose", {
         method: "POST",
-        body: JSON.stringify({ datasetCodes: spec.datasets, context }),
-      }),
+        body: JSON.stringify({ datasetCodes: spec.datasets, context, multiParserRunIds }),
+      })
+    },
     onSuccess: (result) => {
       setSpec(parseProfile(result.definitionJson))
       setDraftedWithAi(true)
@@ -159,17 +178,41 @@ export function ProfilePage() {
             <h1 className="text-2xl font-medium">
               {profile.data?.packageName ?? "Profile"}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {profile.data?.status ?? "Draft"} · version{" "}
-              {profile.data?.version ?? 0}
-              {profile.data?.hasBaseline ? " · original batch stored" : ""}
+            <p className="mt-1 text-sm text-muted-foreground flex flex-wrap items-center gap-x-2">
+              <span>{profile.data?.status ?? "Draft"} · version {profile.data?.version ?? 0}</span>
+              {analysisSummary?.activeCommitVersion ? (
+                <span className="font-mono text-xs px-1.5 py-0.2 rounded bg-muted/60 border text-foreground font-medium">
+                  Commit v{analysisSummary.activeCommitVersion}
+                </span>
+              ) : null}
+              {profile.data?.hasBaseline ? <span>· original batch stored</span> : null}
               {profile.data?.createdWithAi || draftedWithAi
-                ? " · drafted with AI"
-                : ""}
+                ? <span>· drafted with AI</span>
+                : null}
             </p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            render={
+              analysisSummary?.activeAnalysisId ? (
+                <Link to={`/reconciliation/profiles/${profileId}/analyses/${analysisSummary.activeAnalysisId}`} />
+              ) : analysisSummary?.lastAnalysisId ? (
+                <Link to={`/reconciliation/profiles/${profileId}/analyses/${analysisSummary.lastAnalysisId}`} />
+              ) : undefined
+            }
+            onClick={
+              !analysisSummary?.activeAnalysisId && !analysisSummary?.lastAnalysisId
+                ? () => navigate("/configuration/manual/profiles")
+                : undefined
+            }
+          >
+            <Sparkles className="size-3.5 text-primary" />
+            {analysisSummary?.actionLabel || "Optimize with AI"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -216,6 +259,24 @@ export function ProfilePage() {
           </Button>
         </div>
       </div>
+      {analysisSummary?.activeAnalysisId ? (
+        <div className="border bg-blue-500/10 border-blue-500/30 rounded-lg p-3 text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-blue-800 dark:text-blue-300">
+            <Sparkles className="size-4 shrink-0 text-blue-600" />
+            <span>
+              An AI optimization assessment is pending decision for this profile ({analysisSummary.activeStatus || "In progress"}).
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            render={<Link to={`/reconciliation/profiles/${profileId}/analyses/${analysisSummary.activeAnalysisId}`} />}
+          >
+            Review Assessment →
+          </Button>
+        </div>
+      ) : null}
       {error || profile.error || datasets.error ? (
         <ErrorNote
           message={
@@ -224,6 +285,12 @@ export function ProfilePage() {
         />
       ) : null}
       {notice ? <p className="text-sm">{notice}</p> : null}
+      {profile.data?.aiConfigurationId && (
+        <ConfigurationReadiness
+          id={profile.data.aiConfigurationId}
+          unsaved={save.isPending || JSON.stringify(spec) !== JSON.stringify(parseProfile(loadedDefinition || "{}"))}
+        />
+      )}
 
       <section className="overflow-hidden border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">

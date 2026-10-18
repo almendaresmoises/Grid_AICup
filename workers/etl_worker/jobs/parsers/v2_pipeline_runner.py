@@ -7,6 +7,7 @@ and records execution profiling and error summaries.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -62,7 +63,16 @@ def validate_output_contract(frame: pl.DataFrame, fields: list[dict[str, Any]]) 
 
 
 def strip_engine_columns(frame: pl.DataFrame) -> pl.DataFrame:
-    internal = [ERROR_CODES_COLUMN, QUARANTINE_COLUMN, DROP_COLUMN]
+    internal = [
+        ERROR_CODES_COLUMN,
+        QUARANTINE_COLUMN,
+        DROP_COLUMN,
+        "__isa_row_id",
+        "__isa_source_row_number",
+        "__raw_content_id",
+        "__source_file",
+        "__original_row_number",
+    ]
     return frame.drop([column for column in internal if column in frame.columns])
 
 
@@ -352,7 +362,17 @@ def load_v2_inputs(
 
         if source.id == "main":
             frame = frame.with_row_index("__isa_source_row_number")
-            frame = frame.with_columns(
+            raw_id = str(context.parameters.get("raw_content_id") or "")
+            if not raw_id and "file_bytes" in locals() and file_bytes:
+                raw_id = hashlib.sha256(file_bytes).hexdigest()[:16]
+            elif not raw_id:
+                raw_id = str(context.task_id or "raw")
+            src_file_path = context.file_path or context.parameters.get("source_file") or (uri if isinstance(uri, str) else (uri[0] if uri else "input"))
+            src_file_name = Path(src_file_path).name if src_file_path else "input"
+            frame = frame.with_columns([
+                pl.lit(raw_id).alias("__raw_content_id"),
+                pl.lit(src_file_name).alias("__source_file"),
+                (pl.col("__isa_source_row_number") + 1).alias("__original_row_number"),
                 pl.concat_str(
                     [
                         pl.lit(context.task_id or "adhoc"),
@@ -361,7 +381,7 @@ def load_v2_inputs(
                     ],
                     separator=":"
                 ).hash(seed=0).cast(pl.String).alias("__isa_row_id")
-            )
+            ])
             if context.execution_mode == "preview":
                 frame = frame.head(context.preview_limit or 100)
         frames[source.id] = frame
@@ -431,10 +451,20 @@ def execute_v2(context: ExecutionContext, storage: StorageProvider) -> None:
     valid_df, quarantine_df = pl.collect_all([valid_lazy, quarantine_lazy])
     if input_count > 100_000:
         raise ValueError("Parser input exceeds the reconciliation limit of 100,000 rows")
+
+    lineage_df = None
+    if "__isa_source_row_number" in valid_df.columns or "__original_row_number" in valid_df.columns:
+        row_col = "__original_row_number" if "__original_row_number" in valid_df.columns else "__isa_source_row_number"
+        cols_to_keep = [c for c in ["__raw_content_id", "__source_file", row_col, "__isa_row_id"] if c in valid_df.columns]
+        rename_map = {
+            "__raw_content_id": "raw_content_id",
+            "__source_file": "source_file",
+            row_col: "original_row_number",
+            "__isa_row_id": "isa_row_id",
+        }
+        lineage_df = valid_df.select(cols_to_keep).rename({k: v for k, v in rename_map.items() if k in cols_to_keep})
+
     canonical_df = validate_output_contract(strip_engine_columns(valid_df), context.parameters.get("output_contract", []))
-    if "trx_date" in canonical_df.columns and canonical_df["trx_date"].is_not_null().any():
-        canonical_df = canonical_df.filter(pl.col("trx_date").is_not_null())
-        valid_df = valid_df.head(canonical_df.height)
 
     quarantine_percentage = (quarantine_df.height / input_count * 100.0) if input_count else 0.0
     dropped_rows = max(0, input_count - valid_df.height - quarantine_df.height)
@@ -452,6 +482,10 @@ def execute_v2(context: ExecutionContext, storage: StorageProvider) -> None:
     ingested_at = datetime.now(timezone.utc).isoformat()
     source_file = context.file_path or context.parameters.get("source_file") or ""
     source_file_name = Path(source_file).name if source_file else ""
+
+    output_hash: Optional[str] = None
+    lineage_uri: Optional[str] = None
+    lineage_hash: Optional[str] = None
 
     if context.execution_mode != "preview":
         output_df = canonical_df
@@ -477,8 +511,16 @@ def execute_v2(context: ExecutionContext, storage: StorageProvider) -> None:
                 table_uri=target_uri,
                 partition_by=partition_cols,
             )
+        canonical_csv_bytes = canonical_df.write_csv().encode("utf-8")
+        output_hash = hashlib.sha256(canonical_csv_bytes).hexdigest()
         csv_uri = target_uri + ".csv" if target_uri.endswith(".parquet") else target_uri.rstrip("/") + "/data.parquet.csv"
-        storage.write_file(csv_uri, canonical_df.write_csv().encode("utf-8"))
+        storage.write_file(csv_uri, canonical_csv_bytes)
+
+        if lineage_df is not None:
+            lineage_bytes = lineage_df.write_csv().encode("utf-8")
+            lineage_hash = hashlib.sha256(lineage_bytes).hexdigest()
+            lineage_uri = target_uri + ".lineage.csv" if target_uri.endswith(".parquet") else target_uri.rstrip("/") + "/lineage.csv"
+            storage.write_file(lineage_uri, lineage_bytes)
 
     quarantine_uri: Optional[str] = None
     if (
@@ -552,6 +594,18 @@ def execute_v2(context: ExecutionContext, storage: StorageProvider) -> None:
 
     canonical_coverage = extract_canonical_coverage(valid_df)
 
+    # Every published canonical column has completeness evidence, even when the
+    # pipeline did not explicitly request a profiling step.
+    if not column_profiles:
+        for column in canonical_df.columns:
+            series = canonical_df[column]
+            missing = series.null_count()
+            if series.dtype == pl.String:
+                missing += series.str.strip_chars().eq("").sum() or 0
+            column_profiles.append({"column": column, "data_type": str(series.dtype),
+                                    "row_count": canonical_df.height, "null_count": missing,
+                                    "distinct_count": series.drop_nulls().n_unique()})
+
     context._rows_processed = valid_df.height
     context._parser_report = {
         "dataset_code": pipeline.pipeline.name,
@@ -568,6 +622,9 @@ def execute_v2(context: ExecutionContext, storage: StorageProvider) -> None:
         "quarantine_location": quarantine_uri,
         "errors_by_code": error_counts,
         "column_profiles": json.loads(json.dumps(column_profiles, default=str)),
+        "output_hash": output_hash,
+        "lineage_hash": lineage_hash,
+        "lineage_location": lineage_uri,
         "error_samples": bounded_redacted_rows(quarantine_df, sample_limit, sensitive_columns),
         "preview_rows": bounded_redacted_rows(
             canonical_df, context.preview_limit or 100, sensitive_columns

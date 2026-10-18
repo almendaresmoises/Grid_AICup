@@ -634,33 +634,33 @@ public class ReconciliationEngineTests
     [Fact]
     public void Reconcile_EnhancedProfile_PreservesBaselineMatches()
     {
-        var baselinePath = @"C:\Users\maa\.gemini\antigravity-cli\brain\44639d76-d138-40e9-9a46-35cdd56b2a95\scratch\";
-        if (!System.IO.File.Exists(baselinePath + "baseline_datasets.json")) return;
-
-        var dataJson = System.IO.File.ReadAllText(baselinePath + "baseline_datasets.json");
-        var baseProfJson = System.IO.File.ReadAllText(baselinePath + "baseline_profile.json");
-        var enhProfJson = System.IO.File.ReadAllText(baselinePath + "enhanced_profile.json");
-
-        var rows = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, List<Dictionary<string, string>>>>(dataJson)!;
-        var original = ProfileJson.Parse(baseProfJson);
-        var proposed = ProfileJson.Parse(enhProfJson);
+        var rows = new Dictionary<string, List<Dictionary<string, string>>>
+        {
+            ["POS"] = ReconciliationEngine.ReadCsv("id,amount,date\nAAA001,10,2026-08-10\n03655I,20,2026-08-10\n"),
+            ["BANK"] = ReconciliationEngine.ReadCsv("id,amount,date\nAAA001,10,2026-08-10\n036551,20,2026-08-10\n"),
+        };
+        var original = ProfileJson.Parse("""
+            {"datasets":["POS","BANK"],"rules":[{"id":"FULL","type":"exact","datasets":["POS","BANK"],"keys":[
+            {"type":"text","fields":{"POS":"id","BANK":"id"}},
+            {"type":"amount","fields":{"POS":"amount","BANK":"amount"}},
+            {"type":"date","fields":{"POS":"date","BANK":"date"}}]}]}
+            """);
+        var proposed = ProfileJson.Parse(ProfileJson.Write(original));
+        var partial = ProfileJson.Parse(ProfileJson.Write(original)).Rules[0];
+        partial.Id = "REF_FUZZY";
+        partial.Type = "partial";
+        partial.Keys[0].MatchMode = "fuzzy";
+        partial.Keys[0].MinScore = 0.8m;
+        proposed.Rules.Add(partial);
 
         var prev = ReconciliationEngine.Reconcile(rows, original);
         var next = ReconciliationEngine.Reconcile(rows, proposed);
 
         var preserves = ReconciliationEngine.PreservesMatches(prev, next);
         Assert.True(preserves, "Regression check failed: previously matched groups changed!");
-        Assert.Equal(90, next.Statistics.UnresolvedRecords);
-        Assert.Equal(6112, next.Statistics.MatchedRecords);
-
-        var match29 = next.MatchedGroups.FirstOrDefault(g => g.Records.TryGetValue("PF_2", out var ids) && ids.Contains(29));
-        Assert.NotNull(match29);
-        Assert.Equal("PARTIAL_02_REF_FUZZY", match29.Rule);
-        Assert.Contains(83, match29.Records["TTL_2"]);
-        Assert.Equal(0.8333m, match29.Score);
-
-        var resultJson = System.Text.Json.JsonSerializer.Serialize(next, ProfileJson.Storage);
-        System.IO.File.WriteAllText(baselinePath + "csharp_run_result.json", resultJson);
+        Assert.Equal(0, next.Statistics.UnresolvedRecords);
+        Assert.Equal(4, next.Statistics.MatchedRecords);
+        Assert.Equal(0.8333m, next.MatchedGroups.Single(group => group.Rule == "REF_FUZZY").Score);
     }
 
     private static Dictionary<string, List<Dictionary<string, string>>> Batch(int number)

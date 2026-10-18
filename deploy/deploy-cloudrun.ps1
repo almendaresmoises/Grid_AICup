@@ -2,7 +2,7 @@ param (
     [Parameter(Mandatory = $false)]
     [string]$ProjectId,
     [Parameter(Mandatory = $false)]
-    [string]$Region = "asia-southeast1",
+    [string]$Region = "us-central1",
     [Parameter(Mandatory = $false)]
     [string]$SupabaseConnectionString,
     [Parameter(Mandatory = $false)]
@@ -23,7 +23,7 @@ if (-not $ProjectId) {
 }
 
 if (-not $WorkerSecret) {
-    $WorkerSecret = [System.Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+    $WorkerSecret = [System.Guid]::NewGuid().ToString("N") + [System.Guid]::NewGuid().ToString("N")
     Write-Host "Generated random GRID_WORKER_SECRET: $WorkerSecret" -ForegroundColor Yellow
 }
 
@@ -75,6 +75,7 @@ gcloud run deploy grid-api `
     --image=$ApiImage `
     --platform=managed `
     --region=$Region `
+    --port=8080 `
     --allow-unauthenticated `
     --service-account=$ApiSa `
     --memory=1Gi `
@@ -108,19 +109,22 @@ $WorkerEnvVars = @(
     "PUBSUB_PARSER_TOPIC=grid-parser-runs",
     "PUBSUB_PARSER_SUBSCRIPTION=grid-parser-runs-etl",
     "BACKEND_API_URL=$ApiUrl",
+    "GRID_API_URL=$ApiUrl",
     "GRID_WORKER_SECRET=$WorkerSecret",
-    "PUBSUB_MODE=auto",
-    "PORT=8080"
+    "PUBSUB_MODE=auto"
 ) -join ","
 
 gcloud run deploy grid-worker `
     --image=$WorkerImage `
     --platform=managed `
     --region=$Region `
+    --port=8080 `
     --no-allow-unauthenticated `
     --service-account=$WorkerSa `
     --memory=2Gi `
     --cpu=2 `
+    --no-cpu-throttling `
+    --min-instances=1 `
     --timeout=600 `
     --set-env-vars=$WorkerEnvVars
 

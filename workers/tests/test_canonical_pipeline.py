@@ -30,6 +30,51 @@ CONTRACT = [{"name": "receipt_id", "type": "string", "required": True}, {"name":
 
 
 class CanonicalPipelineTests(unittest.TestCase):
+    def test_invalid_card_mask_is_detected_before_source_is_overwritten(self):
+        from workers.etl_worker.jobs.parsers.engine import ParserPipeline, PolarsPipelineCompiler
+        from workers.etl_worker.jobs.parsers.engine.compiler import ERROR_CODES_COLUMN
+        definition = pipeline()
+        definition["steps"] = [{"id": "mask-company", "op": "mask", "args": {
+            "source": "company_code", "target": "company_code", "keepStart": 6, "keepEnd": 4,
+        }}]
+        result = PolarsPipelineCompiler(ParserPipeline.model_validate(definition)).compile({
+            "main": pl.DataFrame({"company_code": ["101"]}).lazy(),
+        })
+        self.assertEqual(result.valid_frame().collect().height, 0)
+        quarantine = result.quarantine_frame().collect()
+        self.assertEqual(quarantine.height, 1)
+        self.assertEqual(quarantine[ERROR_CODES_COLUMN].to_list(), [["mask-company_FAILED"]])
+
+    def test_invalid_cast_is_quarantined_even_when_target_overwrites_source(self):
+        from workers.etl_worker.jobs.parsers.engine import ParserPipeline, PolarsPipelineCompiler
+        result = PolarsPipelineCompiler(ParserPipeline.model_validate(pipeline())).compile({
+            "main": pl.DataFrame({"receipt_id": ["001"], "amount": ["invalid"]}).lazy(),
+        })
+        self.assertEqual(result.valid_frame().collect().height, 0)
+        self.assertEqual(result.quarantine_frame().collect().height, 1)
+
+    def test_cast_does_not_invent_cents_scaling_or_card_masking(self):
+        from workers.etl_worker.jobs.parsers.engine import ParserPipeline, PolarsPipelineCompiler
+        definition = pipeline()
+        definition["steps"].append({"id": "id", "op": "cast", "args": {
+            "source": "receipt_id", "target": "receipt_id", "dataType": "string",
+        }})
+        result = PolarsPipelineCompiler(ParserPipeline.model_validate(definition)).compile({
+            "main": pl.DataFrame({"receipt_id": ["5448301234560002"], "amount": ["000500"]}).lazy(),
+        }).valid_frame().collect()
+        self.assertEqual(result["receipt_id"].to_list(), ["5448301234560002"])
+        self.assertEqual(str(result["amount"][0]), "500.00")
+
+    def test_optional_null_dates_are_preserved_and_counted(self):
+        context = self.execute("receipt_id,amount,trx_date\n001,10.00,2026-08-10\n002,20.00,\n", fields=[
+            *CONTRACT, {"name": "trx_date", "type": "date", "required": False},
+        ])
+        self.assertEqual(context._parser_report["input_rows"], 2)
+        self.assertEqual(context._parser_report["output_rows"], 2)
+        self.assertEqual(context._parser_report["dropped_rows"], 0)
+        profile = next(p for p in context._parser_report["column_profiles"] if p["column"] == "trx_date")
+        self.assertEqual(profile["null_count"], 1)
+
     def execute(self, text, mode="full", fields=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -263,6 +308,20 @@ console.log(JSON.stringify({pipeline: studio.compilePipeline('receipts', documen
             parquet = pl.read_parquet(context.output_location)
             self.assertEqual(parquet["receipt_id"].to_list(), ["010"])
             self.assertEqual([str(v) for v in parquet["amount"]], ["88.40"])
+
+    def test_lineage_sidecar_and_content_hashes_are_generated(self):
+        context = self.execute("receipt_id,amount\n001,10.00\n002,20.00\n")
+        self.assertIn("output_hash", context._parser_report)
+        self.assertIsNotNone(context._parser_report["output_hash"])
+        self.assertIn("lineage_hash", context._parser_report)
+        self.assertIsNotNone(context._parser_report["lineage_hash"])
+        self.assertIn("lineage_location", context._parser_report)
+        lineage_file = context._parser_report["lineage_location"]
+        self.assertTrue(Path(lineage_file).exists())
+        lineage_df = pl.read_csv(lineage_file)
+        self.assertIn("original_row_number", lineage_df.columns)
+        self.assertIn("raw_content_id", lineage_df.columns)
+        self.assertEqual(lineage_df["original_row_number"].to_list(), [1, 2])
 
 
 if __name__ == "__main__":

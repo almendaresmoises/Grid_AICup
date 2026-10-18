@@ -1,0 +1,45 @@
+{
+  "name": "SAP GL vs Bank Statement Reconciliation",
+  "version": 1,
+  "datasets": [
+    "SAP_GL",
+    "BANK_STMT"
+  ],
+  "rules": [
+    {
+      "id": "EXACT_REF_AMT_DATE",
+      "type": "exact",
+      "datasets": [
+        "SAP_GL",
+        "BANK_STMT"
+      ],
+      "keys": [
+        {
+          "type": "text",
+          "match_mode": "exact",
+          "fields": {
+            "SAP_GL": "reference",
+            "BANK_STMT": "bank_reference"
+          }
+        },
+        {
+          "type": "amount",
+          "match_mode": "exact",
+          "fields": {
+            "SAP_GL": "amount",
+            "BANK_STMT": "amount"
+          }
+        },
+        {
+          "type": "date",
+          "match_mode": "exact",
+          "fields": {
+            "SAP_GL": "posting_date",
+            "BANK_STMT": "value_date"
+          }
+        }
+      ],
+      "remarks": "Standard baseline exact match on Reference, Amount, and Date"
+    }
+  ]
+}

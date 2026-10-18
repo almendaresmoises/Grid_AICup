@@ -115,6 +115,7 @@ public static class ReconciliationEngine
         var schemas = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var (code, rows) in datasets)
         {
+            if (rows.Count > MaxRows) throw new ReconciliationException($"Combined files for {code} exceed {MaxRows:N0} rows.");
             if (rows.Count == 0)
             {
                 throw new ReconciliationException("Each CSV must contain at least one data row");
@@ -175,6 +176,10 @@ public static class ReconciliationEngine
                 {
                     throw new ReconciliationException("Partial rules require at least 2 keys (anchor exact key and partial/divergent key)");
                 }
+                if (!keys.Any(key => key.MatchMode is null or "exact" && key.ExpectedMismatch != true))
+                    throw new ReconciliationException("Partial rules require at least one exact anchor key.");
+                if (!keys.Any(key => key.MatchMode is "partial" or "fuzzy" or "divergent" || key.ExpectedMismatch == true))
+                    throw new ReconciliationException("Partial rules must explicitly declare the key allowed to differ.");
             }
 
             if (rule.Type == "aggregate")
@@ -231,7 +236,8 @@ public static class ReconciliationEngine
         {
             if (rule.Type == "partial")
             {
-                ReconcilePartialRule(rule, datasets, available, ambiguous, matched);
+                var fullRule = profile.Rules.FirstOrDefault(candidate => candidate.Type == "exact" && candidate.Datasets.ToHashSet().SetEquals(rule.Datasets));
+                ReconcilePartialRule(rule, datasets, available, ambiguous, matched, fullRule);
                 continue;
             }
 
@@ -373,8 +379,13 @@ public static class ReconciliationEngine
         IReadOnlyDictionary<string, List<Dictionary<string, string>>> datasets,
         Dictionary<string, HashSet<int>> available,
         Dictionary<string, HashSet<int>> ambiguous,
-        List<MatchGroupResult> matched)
+        List<MatchGroupResult> matched,
+        RuleDefinition? fullRule)
     {
+        var omitted = fullRule?.Keys.Where(required => !rule.Keys.Any(key => key.Type == required.Type &&
+            required.Fields.All(field => key.Fields.GetValueOrDefault(field.Key) == field.Value))).ToList() ?? [];
+        var omittedRemarks = "Full-match requirements not evaluated: " +
+            string.Join(", ", omitted.Select(key => key.Fields[rule.Datasets[0]]));
         var exactIndices = new List<int>();
         var partialIndices = new List<int>();
 
@@ -390,12 +401,6 @@ public static class ReconciliationEngine
             {
                 exactIndices.Add(i);
             }
-        }
-
-        if (partialIndices.Count == 0 && rule.Keys.Count >= 2)
-        {
-            partialIndices.Add(rule.Keys.Count - 1);
-            exactIndices.Remove(rule.Keys.Count - 1);
         }
 
         var defaultMinScore = rule.MinScore ?? 0.80m;
@@ -441,6 +446,9 @@ public static class ReconciliationEngine
         foreach (var exactSig in (common ?? []).OrderBy(value => value, SignatureComparer.Instance))
         {
             var candidateMap = rule.Datasets.ToDictionary(code => code, code => signatures[code][exactSig], StringComparer.Ordinal);
+            var combinations = candidateMap.Values.Aggregate(1L, (count, ids) => Math.Min(1_000_001L, count * ids.Count));
+            if (combinations > 100_000)
+                throw new ReconciliationException($"{rule.Id} has too many competing candidates. Add stronger exact anchors.");
 
             if (rule.Datasets.Count == 2)
             {
@@ -496,7 +504,7 @@ public static class ReconciliationEngine
                     matched.Add(new MatchGroupResult
                     {
                         Rule = rule.Id,
-                        RuleType = "partial",
+                        RuleType = pair.divergentKey == null && omitted.Count == 0 ? "exact" : "partial",
                         Key = fullKey,
                         Records = new Dictionary<string, List<int>>
                         {
@@ -505,13 +513,13 @@ public static class ReconciliationEngine
                         },
                         Evidence = new EvidenceResult
                         {
-                            Comparison = "partial_match",
-                            Remarks = pair.remarks,
-                            Score = pair.score,
+                            Comparison = pair.divergentKey == null && omitted.Count == 0 ? "equal_normalized_keys" : "partial_match",
+                            Remarks = omitted.Count > 0 ? omittedRemarks + "; " + pair.remarks : pair.divergentKey == null ? "All configured keys match exactly" : pair.remarks,
+                            Score = omitted.Count > 0 || rule.Keys.Any(k => k.ExpectedMismatch == true || k.MatchMode == "divergent") ? null : pair.score,
                             DivergentKey = pair.divergentKey,
                         },
-                        Remarks = pair.remarks,
-                        Score = pair.score,
+                        Remarks = omitted.Count > 0 ? omittedRemarks + "; " + pair.remarks : pair.divergentKey == null ? "All configured keys match exactly" : pair.remarks,
+                        Score = omitted.Count > 0 || rule.Keys.Any(k => k.ExpectedMismatch == true || k.MatchMode == "divergent") ? null : pair.score,
                     });
 
                     available[codeA].Remove(pair.idxA);
@@ -553,9 +561,12 @@ public static class ReconciliationEngine
                                 continue;
                             }
 
-                            var totalScore = Math.Round((scoreAB + scoreAC) / 2m, 4);
-                            var remarks = string.IsNullOrWhiteSpace(remarksAB) ? remarksAC : remarksAB;
-                            var div = divAB ?? divAC;
+                            var (passedBC, scoreBC, remarksBC, divBC) = EvaluatePartialKeys(
+                                rowB, rowC, rule, partialIndices, codeB, codeC, defaultMinScore);
+                            if (!passedBC) continue;
+                            var totalScore = Math.Round((scoreAB + scoreAC + scoreBC) / 3m, 4);
+                            var remarks = string.Join("; ", new[] { $"{codeA}/{codeB}: {remarksAB}", $"{codeA}/{codeC}: {remarksAC}", $"{codeB}/{codeC}: {remarksBC}" });
+                            var div = divAB ?? divAC ?? divBC;
                             scoredTriplets.Add((idxA, idxB, idxC, totalScore, remarks, div));
                         }
                     }
@@ -572,6 +583,13 @@ public static class ReconciliationEngine
                     {
                         continue;
                     }
+                    if (scoredTriplets.Any(other => other.score == triplet.score && other != triplet &&
+                        !usedA.Contains(other.idxA) && !usedB.Contains(other.idxB) && !usedC.Contains(other.idxC) &&
+                        (other.idxA == triplet.idxA || other.idxB == triplet.idxB || other.idxC == triplet.idxC)))
+                    {
+                        MarkAmbiguous(ambiguous, new Dictionary<string, List<int>> { [codeA] = [triplet.idxA], [codeB] = [triplet.idxB], [codeC] = [triplet.idxC] });
+                        continue;
+                    }
 
                     usedA.Add(triplet.idxA);
                     usedB.Add(triplet.idxB);
@@ -582,7 +600,7 @@ public static class ReconciliationEngine
                     matched.Add(new MatchGroupResult
                     {
                         Rule = rule.Id,
-                        RuleType = "partial",
+                        RuleType = triplet.divergentKey == null && omitted.Count == 0 ? "exact" : "partial",
                         Key = fullKey,
                         Records = new Dictionary<string, List<int>>
                         {
@@ -592,13 +610,13 @@ public static class ReconciliationEngine
                         },
                         Evidence = new EvidenceResult
                         {
-                            Comparison = "partial_match",
-                            Remarks = triplet.remarks,
-                            Score = triplet.score,
+                            Comparison = triplet.divergentKey == null && omitted.Count == 0 ? "equal_normalized_keys" : "partial_match",
+                            Remarks = omitted.Count > 0 ? omittedRemarks + "; " + triplet.remarks : triplet.divergentKey == null ? "All configured keys match exactly" : triplet.remarks,
+                            Score = omitted.Count > 0 || rule.Keys.Any(k => k.ExpectedMismatch == true || k.MatchMode == "divergent") ? null : triplet.score,
                             DivergentKey = triplet.divergentKey,
                         },
-                        Remarks = triplet.remarks,
-                        Score = triplet.score,
+                        Remarks = omitted.Count > 0 ? omittedRemarks + "; " + triplet.remarks : triplet.divergentKey == null ? "All configured keys match exactly" : triplet.remarks,
+                        Score = omitted.Count > 0 || rule.Keys.Any(k => k.ExpectedMismatch == true || k.MatchMode == "divergent") ? null : triplet.score,
                     });
 
                     available[codeA].Remove(triplet.idxA);
@@ -635,6 +653,9 @@ public static class ReconciliationEngine
             var rawA = rowA.TryGetValue(colA, out var vA) ? vA : "";
             var rawB = rowB.TryGetValue(colB, out var vB) ? vB : "";
 
+            if (string.IsNullOrWhiteSpace(rawA) || string.IsNullOrWhiteSpace(rawB))
+                return (false, 0m, "", null);
+
             var normA = Normalize(rawA, keyDef, codeA) ?? rawA.Trim();
             var normB = Normalize(rawB, keyDef, codeB) ?? rawB.Trim();
 
@@ -643,11 +664,10 @@ public static class ReconciliationEngine
 
             if (isExpectedMismatch)
             {
-                primaryDivergentKey = colA;
                 if (!string.Equals(normA, normB, StringComparison.OrdinalIgnoreCase))
                 {
+                    primaryDivergentKey = colA;
                     remarksList.Add($"Possible match but {colA} is not matched ('{rawA}' vs '{rawB}')");
-                    scores.Add(keyDef.MinScore ?? defaultMinScore);
                 }
                 else
                 {
@@ -673,6 +693,9 @@ public static class ReconciliationEngine
                     tolerance = parsedTol;
                 }
 
+                if (tolerance.HasValue && Math.Abs(decA.Value - decB.Value) > tolerance.Value)
+                    return (false, 0m, "", null);
+
                 sim = NumericMatching.Similarity(decA.Value, decB.Value, tolerance);
             }
             else if (keyDef.Type == "date")
@@ -687,6 +710,8 @@ public static class ReconciliationEngine
                 if (DateTime.TryParse(dateA, out var dtA) && DateTime.TryParse(dateB, out var dtB))
                 {
                     var daysDiff = Math.Abs((dtA - dtB).TotalDays);
+                    var maxDays = decimal.TryParse(keyDef.Tolerance, NumberStyles.Number, CultureInfo.InvariantCulture, out var days) ? days : 2m;
+                    if ((decimal)daysDiff > maxDays) return (false, 0m, "", null);
                     sim = daysDiff == 0 ? 1.0m : Math.Max(0m, 1.0m - ((decimal)daysDiff / 10m));
                 }
                 else
@@ -699,13 +724,14 @@ public static class ReconciliationEngine
                 sim = DamerauLevenshtein.Similarity(normA, normB);
             }
 
+            if (!string.Equals(normA, normB, StringComparison.Ordinal) && sim >= 1m) sim = 0.9999m;
             if (sim < minScore)
             {
                 return (false, sim, "", null);
             }
 
             scores.Add(sim);
-            if (sim < 1.0m)
+            if (!string.Equals(normA, normB, StringComparison.Ordinal))
             {
                 primaryDivergentKey = colA;
                 remarksList.Add($"Possible match: {colA} similarity is {sim * 100:0.#}% ('{rawA}' vs '{rawB}')");
@@ -849,6 +875,12 @@ public static class ReconciliationEngine
         {
             throw new ReconciliationException("Key algorithm must be damerau_levenshtein, numeric_best_practice, date_proximity, or exact");
         }
+        if (key.Tolerance != null && (!decimal.TryParse(key.Tolerance, NumberStyles.Number, CultureInfo.InvariantCulture, out var tolerance) || tolerance < 0))
+            throw new ReconciliationException("Key tolerance must be a non-negative number.");
+        if (key.Algorithm == "damerau_levenshtein" && key.Type != "text" ||
+            key.Algorithm == "numeric_best_practice" && key.Type != "amount" ||
+            key.Algorithm == "date_proximity" && key.Type != "date")
+            throw new ReconciliationException("Matching algorithm does not support the declared key type.");
     }
 
     private static string[]? Signature(IReadOnlyDictionary<string, string> row, RuleDefinition rule, string dataset)
@@ -911,6 +943,8 @@ public static class ReconciliationEngine
 
         return null;
     }
+
+    public static bool IsValidKeyValue(string? value, KeyDefinition key, string dataset) => Normalize(value, key, dataset) != null;
 
     private static string? CanonicalAmount(string value)
     {

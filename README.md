@@ -126,7 +126,7 @@ The worker loads `.env`, subscribes to `grid-parser-runs`, and writes parser out
 
 - **Dashboard** charts daily full-match, partial-match and exception record counts for the last 7, 30 or 90 days using the server's recorded run times; its timezone is shown on the chart. Hover/tap or use arrow keys to inspect dates; legend buttons toggle lines. Below it, the five profiles with the lowest record-weighted match rates use the same period. Match rates include full and partial matches. Dashboard summaries refresh every minute and on returning to the page.
 - **Reconciliation Runs** lists runs and opens a data grid.
-- **Configuration → Configure with AI** prepares datasets and parsers from two or three CSV files, drafts a profile, and parses the uploads. At completion, choose **Review configuration** or **Run uploaded samples**. It needs `GEMINI_API_KEY` and the parser worker.
+- **Configuration → Configure with AI** accepts two or three dataset groups, with multiple CSV, TXT or Excel files per group. It proposes source-backed schemas and parsers, uploads every file, then hands off to a durable server job. The job waits for all parser outputs, profiles the combined canonical rows, drafts evidence-based matching rules and previews reconciliation before saving a draft profile. At completion, choose **Review configuration** or **Run uploaded files**. The API, parser worker, database and object storage must be running. Model failures use a disclosed, validated deterministic fallback.
 - **Configuration → Manually Configure**
   - **Parsers** is the parser studio: setup, source file, transforms, then review and publish.
   - **Datasets** defines canonical schemas and the Cloud Storage directory each parser writes to.
@@ -139,6 +139,12 @@ For manual setup, create canonical datasets, publish their parsers, then create 
 Parser output includes Parquet and a CSV sidecar containing the same canonical rows. Parser runs made before this sidecar was introduced must be reprocessed before they can feed a new reconciliation run. Existing reconciliation snapshots remain readable. The first successful reconciliation run stores the regression baseline; approving a profile does not require uploading a file first.
 
 The dashboard reads compact `AppReconciliationRunSummaries` counters, written in the same transaction as each completed run. It aggregates those counters in the database rather than loading transaction snapshots into the API or browser. Apply the `AddReconciliationRunSummaries` migration before running the updated API; it creates the indexed summary table and backfills existing completed runs once. Deleting a run also deletes its summary through a foreign key cascade. Failed runs without record outcomes are excluded from record-based charts.
+
+Apply `AddAiConfigurationJobs` before using the updated AI setup. Upload receipts, input manifests and validation results are persisted in `AppAiConfigurations`; ABP's database-backed background queue continues after navigation or API restarts. Uploading files still requires the browser until all receipts have been accepted. **Saved configurations** restores server jobs even without browser session data. After handoff, pausing only stops monitoring; server validation continues.
+
+The AI flow validates actual output counts, matching-key completeness, scope preservation, pass contributions and ambiguity. Company and branch scope cannot silently disappear in later passes. Invalid conversions are quarantined; recovery never removes transformations to force success. Amount/date tolerances are absolute limits. The results grid labels fuzzy comparisons as **Match Similarity**, not confidence; omitted requirements and unbounded divergence do not receive invented scores. Existing immutable runs are unchanged. Previously corrupted parser outputs must be corrected and reprocessed before a new validated run.
+
+Review and run share the current saved profile and the exact parser-run IDs for every uploaded file. Save edits, refresh validation, then run. A stale revision is rejected; retrying the same validated revision returns the existing run. No reconciliation run is created during preview.
 
 ## Production
 
@@ -176,4 +182,4 @@ firebase deploy --only hosting
 
 ## Gemini
 
-Set `GEMINI_API_KEY` in `.env` to enable **Configure with AI** and profile suggestions. `GEMINI_MODEL` defaults to `gemini-3.8-flash`. With the key empty, those actions report that the assistant is unavailable and manual configuration still saves.
+Set `GEMINI_API_KEY` in `.env` for model-generated parser and profile proposals. `GEMINI_MODEL` defaults to `gemini-3.8-flash`. With the key empty or a failed model response, automatic setup can use deterministic proposals that must pass the same output validation. The saved parser/profile records identify their generation source. Manual configuration remains available.

@@ -243,7 +243,7 @@ public class ParserRunAppService : ApplicationService, IParserRunAppService
         {
             await admin.CreateTopicAsync(topic);
         }
-        catch (RpcException exception) when (exception.StatusCode == StatusCode.AlreadyExists)
+        catch (RpcException exception) when (exception.StatusCode is StatusCode.AlreadyExists or StatusCode.PermissionDenied)
         {
         }
 

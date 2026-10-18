@@ -95,7 +95,11 @@ public class GridHttpApiHostModule : AbpModule
             PreConfigure<OpenIddictServerBuilder>(serverBuilder =>
             {
                 serverBuilder.AddProductionEncryptionAndSigningCertificate("openiddict.pfx", configuration["AuthServer:CertificatePassPhrase"]!);
-                serverBuilder.SetIssuer(new Uri(configuration["AuthServer:Authority"]!));
+                var authority = configuration["AuthServer:Authority"];
+                if (!string.IsNullOrWhiteSpace(authority) && Uri.TryCreate(authority, UriKind.Absolute, out var authorityUri))
+                {
+                    serverBuilder.SetIssuer(authorityUri);
+                }
             });
         }
     }
@@ -251,8 +255,9 @@ public class GridHttpApiHostModule : AbpModule
 
     private static void ConfigureSwagger(ServiceConfigurationContext context, IConfiguration configuration)
     {
+        var authority = configuration["AuthServer:Authority"] ?? configuration["App:SelfUrl"] ?? "http://localhost:44344";
         context.Services.AddAbpSwaggerGenWithOidc(
-            configuration["AuthServer:Authority"]!,
+            authority,
             ["Grid"],
             [AbpSwaggerOidcFlows.AuthorizationCode],
             null,
@@ -270,15 +275,24 @@ public class GridHttpApiHostModule : AbpModule
         {
             options.AddDefaultPolicy(builder =>
             {
+                var origins = configuration["App:CorsOrigins"]?
+                    .Split(",", StringSplitOptions.RemoveEmptyEntries)
+                    .Select(o => o.Trim().RemovePostFix("/"))
+                    .ToArray() ?? Array.Empty<string>();
+
+                if (origins.Length == 0 || origins.Contains("*"))
+                {
+                    builder.SetIsOriginAllowed(_ => true);
+                }
+                else
+                {
+                    builder
+                        .WithOrigins(origins)
+                        .SetIsOriginAllowedToAllowWildcardSubdomains();
+                }
+
                 builder
-                    .WithOrigins(
-                        configuration["App:CorsOrigins"]?
-                            .Split(",", StringSplitOptions.RemoveEmptyEntries)
-                            .Select(o => o.Trim().RemovePostFix("/"))
-                            .ToArray() ?? Array.Empty<string>()
-                    )
                     .WithAbpExposedHeaders()
-                    .SetIsOriginAllowedToAllowWildcardSubdomains()
                     .AllowAnyHeader()
                     .AllowAnyMethod()
                     .AllowCredentials();

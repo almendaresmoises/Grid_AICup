@@ -25,6 +25,7 @@ export type Package = {
 }
 
 export type Profile = {
+  aiConfigurationId?: string | null
   id: string
   packageId: string
   packageName: string

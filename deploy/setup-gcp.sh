@@ -4,7 +4,7 @@ set -e
 echo "=== Grid GCP Infrastructure Setup (Bash / Cloud Shell) ==="
 
 PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null)}"
-REGION="${2:-asia-southeast1}"
+REGION="${2:-us-central1}"
 
 if [ -z "$PROJECT_ID" ]; then
     read -p "Enter your Google Cloud Project ID: " PROJECT_ID
@@ -51,6 +51,8 @@ WORKER_SA="grid-worker-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 gsutil iam ch "serviceAccount:${API_SA}:roles/storage.objectAdmin" "gs://${BUCKET_NAME}"
 gsutil iam ch "serviceAccount:${WORKER_SA}:roles/storage.objectAdmin" "gs://${BUCKET_NAME}"
 
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${API_SA}" --role="roles/pubsub.editor"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${WORKER_SA}" --role="roles/pubsub.editor"
 gcloud pubsub topics add-iam-policy-binding grid-parser-runs --member="serviceAccount:${API_SA}" --role="roles/pubsub.publisher"
 gcloud pubsub topics add-iam-policy-binding grid-datasets --member="serviceAccount:${API_SA}" --role="roles/pubsub.publisher"
 gcloud pubsub subscriptions add-iam-policy-binding grid-parser-runs-etl --member="serviceAccount:${WORKER_SA}" --role="roles/pubsub.subscriber"

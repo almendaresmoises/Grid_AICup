@@ -1,7 +1,14 @@
 export class ApiError extends Error {
-  constructor(message: string) {
+  status?: number
+  code?: string
+  details?: unknown
+
+  constructor(message: string, status?: number, code?: string, details?: unknown) {
     super(message)
     this.name = "ApiError"
+    this.status = status
+    this.code = code
+    this.details = details
   }
 }
 
@@ -79,12 +86,15 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await response.text()
   const payload = text ? JSON.parse(text) : null
   if (!response.ok) {
-    throw new ApiError(
+    const message =
       payload?.error?.message ||
-        payload?.error_description ||
-        text ||
-        "Request failed"
-    )
+      payload?.error_description ||
+      payload?.message ||
+      text ||
+      "Request failed"
+    const code = payload?.error?.code || payload?.code
+    const details = payload?.error?.details || payload?.details
+    throw new ApiError(message, response.status, code, details)
   }
   return payload as T
 }

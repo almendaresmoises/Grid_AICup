@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -26,9 +26,18 @@ public static class HealthChecksBuilderExtensions
             healthCheckUrl = "/health-status";
         }
 
+        var targetUiEndpoint = configuration["App:HealthUiCheckUrl"] ?? healthCheckUrl;
+        if (targetUiEndpoint.StartsWith('/'))
+        {
+            var selfUrl = configuration["App:SelfUrl"]?.TrimEnd('/');
+            targetUiEndpoint = !string.IsNullOrEmpty(selfUrl)
+                ? $"{selfUrl}{targetUiEndpoint}"
+                : $"http://127.0.0.1:8080{targetUiEndpoint}";
+        }
+
         var healthChecksUiBuilder = services.AddHealthChecksUI(settings =>
         {
-            settings.AddHealthCheckEndpoint("Grid Health Status", configuration["App:HealthUiCheckUrl"] ?? healthCheckUrl);
+            settings.AddHealthCheckEndpoint("Grid Health Status", targetUiEndpoint);
         });
 
         // Set your HealthCheck UI Storage here

@@ -20,5 +20,14 @@ public static class DatasetsDbContextModelCreatingExtensions
             b.HasIndex(x => x.Code).IsUnique().HasFilter("\"IsDeleted\" = false");
             b.HasIndex(x => x.GcsPrefix).IsUnique().HasFilter("\"IsDeleted\" = false");
         });
+
+        builder.Entity<CanonicalDatasetRevision>(b =>
+        {
+            b.ToTable(DatasetConsts.DbTablePrefix + "CanonicalDatasetRevisions", DatasetConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.ContentHash).IsRequired().HasMaxLength(64);
+            b.Property(x => x.SchemaSnapshotJson).IsRequired();
+            b.HasIndex(x => new { x.CanonicalDatasetId, x.ContentHash }).IsUnique();
+        });
     }
 }

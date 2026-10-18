@@ -49,6 +49,7 @@ public class Profile : CreationAuditedAggregateRoot<Guid>
     public string DefinitionJson { get; set; } = "{}";
 
     public string? ApprovedDefinitionJson { get; set; }
+    public Guid? ActiveConfigurationCommitId { get; set; }
 }
 
 public class RegressionBaseline : Entity<Guid>

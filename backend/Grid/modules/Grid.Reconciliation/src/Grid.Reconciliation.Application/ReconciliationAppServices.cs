@@ -416,6 +416,7 @@ public class ProfileAppService : ApplicationService, IProfileAppService
             DefinitionJson = profile.DefinitionJson,
             ApprovedDefinitionJson = profile.ApprovedDefinitionJson,
             HasBaseline = hasBaseline,
+            AiConfigurationId = profile.ExtraProperties.TryGetValue("AiConfigurationId", out var configurationId) && Guid.TryParse(configurationId?.ToString(), out var parsedId) ? parsedId : null,
             CreatedWithAi = MarkedByAi(profile.ExtraProperties),
         };
     }
@@ -592,6 +593,11 @@ public class RunAppService : ApplicationService, IRunAppService
         try
         {
             rows = await _data.LoadAsync(definition.Datasets, input.ParserRunIds, input.MultiParserRunIds, requireParserRuns: true);
+            if (profile.ExtraProperties.TryGetValue("CreatedWithAi", out var aiOrigin) && bool.TryParse(aiOrigin?.ToString(), out var isAi) && isAi)
+            {
+                var assessment = AiConfigurationValidator.Assess(definition, rows, preview: false);
+                if (!assessment.Passed) throw new ReconciliationException(string.Join(" ", assessment.Errors));
+            }
             result = ReconciliationEngine.Reconcile(rows, definition);
         }
         catch (ReconciliationException ex)

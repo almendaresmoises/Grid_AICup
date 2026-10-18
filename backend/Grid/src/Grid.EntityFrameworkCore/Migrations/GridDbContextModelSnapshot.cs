@@ -112,6 +112,46 @@ namespace Grid.Migrations
                     b.ToTable("AppCanonicalDatasets", (string)null);
                 });
 
+            modelBuilder.Entity("Grid.Datasets.CanonicalDatasetRevision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CanonicalDatasetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProvenanceAnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProvenanceCommitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("RevisionNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SchemaSnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CanonicalDatasetId", "ContentHash")
+                        .IsUnique();
+
+                    b.ToTable("AppCanonicalDatasetRevisions", (string)null);
+                });
+
             modelBuilder.Entity("Grid.Parsers.ParserConfiguration", b =>
                 {
                     b.Property<Guid>("Id")
@@ -186,6 +226,46 @@ namespace Grid.Migrations
                     b.ToTable("AppParserConfigurations", (string)null);
                 });
 
+            modelBuilder.Entity("Grid.Parsers.ParserConfigurationRevision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ParserConfigurationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProvenanceAnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProvenanceCommitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("RevisionNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParserConfigurationId", "ContentHash")
+                        .IsUnique();
+
+                    b.ToTable("AppParserConfigurationRevisions", (string)null);
+                });
+
             modelBuilder.Entity("Grid.Parsers.ParserRun", b =>
                 {
                     b.Property<Guid>("Id")
@@ -251,6 +331,331 @@ namespace Grid.Migrations
                     b.HasIndex("ParserConfigurationId");
 
                     b.ToTable("AppParserRuns", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.AiConfiguration", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExecutedRevision")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<string>("ManifestJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatorId", "CreationTime");
+
+                    b.ToTable("AppAiConfigurations", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.AnalysisWorkAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CheckpointJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid?>("ExecutionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("Heartbeat")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime>("LeaseExpiry")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LeaseOwner")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("WorkType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LeaseExpiry");
+
+                    b.ToTable("AppAnalysisWorkAttempts", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ConfigurationCommit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApprovedProfileSnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BaseHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<Guid>("DecisionRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ParentCommitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ProfileVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RejectedOperationIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RevisionBindingsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SelectedOperationIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceManifestJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ValidationReportHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentHash");
+
+                    b.HasIndex("ProfileId", "CreationTime");
+
+                    b.ToTable("AppConfigurationCommits", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ConfigurationDispatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DeduplicationKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("NextAttemptTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("SentTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeduplicationKey")
+                        .IsUnique();
+
+                    b.HasIndex("NextAttemptTime", "Status");
+
+                    b.ToTable("AppConfigurationDispatches", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ConfigurationExecution", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AssessedInputManifestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("CommitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletionTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid>("ExecutionRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<Guid?>("ResultingRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExecutionRequestId");
+
+                    b.HasIndex("CommitId", "AssessedInputManifestHash");
+
+                    b.ToTable("AppConfigurationExecutions", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ConfigurationRequestReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("OperationKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("RequestBodyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ResultId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("TargetAnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TargetProfileId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorId", "OperationKind", "RequestId")
+                        .IsUnique();
+
+                    b.ToTable("AppConfigurationRequestReceipts", (string)null);
                 });
 
             modelBuilder.Entity("Grid.Reconciliation.Dataset", b =>
@@ -405,6 +810,9 @@ namespace Grid.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ActiveConfigurationCommitId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("ApprovedDefinitionJson")
                         .HasColumnType("text");
 
@@ -452,6 +860,297 @@ namespace Grid.Migrations
                         .IsUnique();
 
                     b.ToTable("AppProfiles", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ProfileAnalysisSlot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ActiveAnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConcurrencyToken")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid?>("LastAnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AppProfileAnalysisSlots", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ReconciliationAnalysis", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BaseHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("CompletionTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<Guid?>("ConfigurationCommitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Context")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<Guid?>("DecisionActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DecisionRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("DecisionTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FailureMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("ManifestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ManifestJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("PreviewId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PromptModelProvenanceJson")
+                        .HasColumnType("text");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SelectionHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SelectionJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("SourceRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProfileId", "CreationTime");
+
+                    b.ToTable("AppReconciliationAnalyses", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ReconciliationAnalysisChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AfterJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("AnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BaseHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("BeforeJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BlockerReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("ChangeType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("DependencyGroupId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("EvidenceIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsSelectable")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("OperationJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OperationType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Rationale")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SafetyClass")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("TargetIdentifier")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int?>("TargetObjectVersion")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AnalysisId", "DependencyGroupId");
+
+                    b.ToTable("AppReconciliationAnalysisChanges", (string)null);
+                });
+
+            modelBuilder.Entity("Grid.Reconciliation.ReconciliationAnalysisValidation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AmbiguousCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("AnalysisId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("BaseAmbiguousCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("BaseFullMatchCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("BaseHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("BasePartialMatchCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("BaseUnresolvedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CompletionTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("Coverage")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("DetailedReportJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EngineVersion")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("FullMatchCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("InputManifestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("PartialMatchCount")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("PreservedMatches")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("RegressionVerdictsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SelectionHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("TotalRecords")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("UnresolvedCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AnalysisId", "SelectionHash");
+
+                    b.ToTable("AppReconciliationAnalysisValidations", (string)null);
                 });
 
             modelBuilder.Entity("Grid.Reconciliation.ReconciliationRun", b =>
