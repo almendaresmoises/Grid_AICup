@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router"
 import { api, clearToken } from "@/lib/api"
 import { getAiSessionState, subscribeAiSession, type AiSessionState } from "@/lib/ai-config-session"
+import { RgLogo } from "@/components/rg-logo"
 
 const storageKey = "grid_sidebar"
 
@@ -83,8 +84,11 @@ export function Shell() {
           id="app-sidebar"
           className={`flex h-full flex-col overflow-hidden bg-sidebar text-sidebar-foreground shadow-[8px_0_24px_-16px_rgba(0,0,0,0.55)] transition-[width] duration-300 motion-reduce:transition-none ${ease} ${collapsed ? "w-14" : "w-60"}`}
         >
-          <div className="flex h-14 items-center border-b border-sidebar-border px-5">
-            <p className={`text-sm font-medium tracking-wide ${labelMotion(collapsed)}`}>GRID</p>
+          <div className="flex h-14 items-center gap-2.5 border-b border-sidebar-border px-4">
+            <RgLogo size="sm" variant="sidebar" className="shrink-0" />
+            <span className={`text-base font-bold tracking-tight font-heading ${labelMotion(collapsed)}`}>
+              ReconGrid
+            </span>
           </div>
           <nav className="flex flex-1 flex-col gap-1 p-2" aria-label="Main">
             {links.map((link) => {
