@@ -158,8 +158,7 @@ public class ParserRunAppService : ApplicationService, IParserRunAppService
         if (!parser.IsActive) throw new UserFriendlyException("This parser is inactive.");
         var error = ParserPipelineDefinitionValidator.Validate(parser.PipelineJson);
         if (error != null) throw new UserFriendlyException(error);
-        var datasetId = GetDatasetId(parser.PipelineJson);
-        var dataset = await _datasets.GetAsync(datasetId);
+        var dataset = await ResolveDatasetAsync(parser);
         if (!DatasetContractValidator.TryReadContract(dataset.SchemaColumnsJson, out var fields))
             throw new UserFriendlyException("The selected dataset contract is invalid.");
         var safeName = Path.GetFileName(fileName);
@@ -264,16 +263,58 @@ public class ParserRunAppService : ApplicationService, IParserRunAppService
 
     private static string ObjectName(string uri) => uri[(uri.IndexOf('/', 5) + 1)..];
 
-    private static Guid GetDatasetId(string pipelineJson)
+    private async Task<CanonicalDataset> ResolveDatasetAsync(ParserConfiguration parser)
     {
-        using var document = JsonDocument.Parse(pipelineJson);
-        foreach (var step in document.RootElement.GetProperty("steps").EnumerateArray())
+        var studioId = TryGetStudioDatasetId(parser.PipelineJson);
+        if (studioId.HasValue)
         {
-            if (step.GetProperty("id").GetString() == "__studio" &&
-                step.TryGetProperty("args", out var args) && args.TryGetProperty("studio", out var studio) &&
-                studio.TryGetProperty("datasetId", out var value) && Guid.TryParse(value.GetString(), out var id)) return id;
+            var ds = await _datasets.FindAsync(studioId.Value);
+            if (ds != null) return ds;
         }
+
+        var allDatasets = await _datasets.GetListAsync();
+        if (!string.IsNullOrWhiteSpace(parser.OutputGcsPrefix))
+        {
+            var normalized = parser.OutputGcsPrefix.Trim().Trim('/').ToLowerInvariant();
+            var ds = allDatasets.FirstOrDefault(d => string.Equals(d.GcsPrefix.Trim().Trim('/'), normalized, StringComparison.OrdinalIgnoreCase));
+            if (ds != null) return ds;
+        }
+
+        var cleanParserName = parser.Name.Replace(" ", "").Replace("_", "").ToLowerInvariant();
+        var fallback = allDatasets.FirstOrDefault(d =>
+        {
+            var cleanCode = d.Code.Replace(" ", "").Replace("_", "").ToLowerInvariant();
+            var cleanDsName = d.Name.Replace(" ", "").Replace("_", "").ToLowerInvariant();
+            return (!string.IsNullOrEmpty(cleanCode) && (cleanParserName.Contains(cleanCode) || cleanCode.Contains(cleanParserName))) ||
+                   (!string.IsNullOrEmpty(cleanDsName) && (cleanParserName.Contains(cleanDsName) || cleanDsName.Contains(cleanParserName)));
+        });
+        if (fallback != null) return fallback;
+
         throw new UserFriendlyException("Select a canonical dataset in the parser studio and publish the parser before uploading files.");
+    }
+
+    private static Guid? TryGetStudioDatasetId(string pipelineJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(pipelineJson);
+            if (document.RootElement.TryGetProperty("steps", out var steps) && steps.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var step in steps.EnumerateArray())
+                {
+                    if (step.TryGetProperty("id", out var id) && id.GetString() == "__studio" &&
+                        step.TryGetProperty("args", out var args) && args.TryGetProperty("studio", out var studio) &&
+                        studio.TryGetProperty("datasetId", out var value) && Guid.TryParse(value.GetString(), out var parsedId))
+                    {
+                        return parsedId;
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+        return null;
     }
 
     private static bool FixedEquals(string expected, string? actual)

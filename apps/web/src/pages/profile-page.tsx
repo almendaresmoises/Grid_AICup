@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   ArrowUp,
   Database,
+  Download,
+  Loader2,
   Pencil,
   Plus,
   Sparkles,
@@ -16,6 +18,7 @@ import { ConfigurationReadiness } from "@/components/configuration-readiness"
 import { ErrorNote } from "@/components/error-note"
 import { Modal } from "@/components/modal"
 import { api } from "@/lib/api"
+import { exportProfileBundle } from "@/lib/profile-bundle"
 import { getProfileStatuses, reconciliationAnalysisKeys } from "@/lib/reconciliation-analysis"
 import type { ConfigurationJob } from "@/lib/ai-configuration"
 import {
@@ -59,6 +62,19 @@ export function ProfilePage() {
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
   const [draftedWithAi, setDraftedWithAi] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+
+  const handleExport = async () => {
+    if (!profileId) return
+    try {
+      setIsExporting(true)
+      await exportProfileBundle(profileId, profile.data?.name)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export profile bundle")
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   const [loadedDefinition, setLoadedDefinition] = useState<string | null>(null)
   if (profile.data && profile.data.definitionJson !== loadedDefinition) {
@@ -235,6 +251,20 @@ export function ProfilePage() {
           <Button
             variant="outline"
             size="sm"
+            disabled={isExporting}
+            onClick={handleExport}
+          >
+            {isExporting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Download className="size-3.5" />
+            )}
+            Export JSON
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            nativeButton={false}
             disabled={profile.data?.status !== "Approved"}
             render={
               <Link to={`/reconciliation/runs/new?profileId=${profileId}`} />

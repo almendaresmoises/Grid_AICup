@@ -1,6 +1,6 @@
 import { Button } from "@workspace/ui/components/button"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Loader2, Sparkles } from "lucide-react"
+import { ArrowLeft, Loader2, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { api } from "@/lib/api"
@@ -68,9 +68,10 @@ export function RunPage() {
         </div>
         <Button
           variant="outline"
-          render={<Link to={`/reconciliation/profiles/${detail.profileId}`} />}
+          render={<Link to={`/reconciliation/runs/${runId}/grid`} />}
         >
-          Back to profile
+          <ArrowLeft className="size-4" />
+          Back to data grid
         </Button>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">

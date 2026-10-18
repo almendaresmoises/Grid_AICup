@@ -1,0 +1,50 @@
+{
+  "formatVersion": 1,
+  "exportedAt": "2026-10-18T12:00:00Z",
+  "package": {
+    "name": "SAP GL vs Bank Statement Reconciliation",
+    "description": "Corporate financial reconciliation comparing SAP ERP General Ledger (account 113100) with JPMorgan Chase Bank Statements."
+  },
+  "profile": {
+    "name": "SAP GL vs Bank Statement Reconciliation",
+    "description": "Corporate financial reconciliation comparing SAP ERP General Ledger (account 113100) with JPMorgan Chase Bank Statements.",
+    "version": 1,
+    "status": "Approved",
+    "createdWithAi": false,
+    "definitionJson": "{\n  \"name\": \"SAP GL vs Bank Statement Reconciliation\",\n  \"version\": 1,\n  \"datasets\": [\n    \"SAP_GL\",\n    \"BANK_STMT\"\n  ],\n  \"rules\": [\n    {\n      \"id\": \"EXACT_REF_AMT_DATE\",\n      \"type\": \"exact\",\n      \"datasets\": [\n        \"SAP_GL\",\n        \"BANK_STMT\"\n      ],\n      \"keys\": [\n        {\n          \"type\": \"text\",\n          \"match_mode\": \"exact\",\n          \"fields\": {\n            \"SAP_GL\": \"reference\",\n            \"BANK_STMT\": \"bank_reference\"\n          }\n        },\n        {\n          \"type\": \"amount\",\n          \"match_mode\": \"exact\",\n          \"fields\": {\n            \"SAP_GL\": \"amount\",\n            \"BANK_STMT\": \"amount\"\n          }\n        },\n        {\n          \"type\": \"date\",\n          \"match_mode\": \"exact\",\n          \"fields\": {\n            \"SAP_GL\": \"posting_date\",\n            \"BANK_STMT\": \"value_date\"\n          }\n        }\n      ],\n      \"remarks\": \"Standard baseline exact match on Reference, Amount, and Date\"\n    }\n  ]\n}"
+  },
+  "datasets": [
+    {
+      "code": "SAP_GL",
+      "name": "SAP General Ledger",
+      "description": "Operating cash clearing account transactions from SAP ERP (Account 113100)",
+      "gcsPrefix": "canonical/sap_gl",
+      "schemaColumnsJson": "[{\"name\":\"company_code\",\"polarsType\":\"pl.String\"},{\"name\":\"gl_account\",\"polarsType\":\"pl.String\"},{\"name\":\"document_no\",\"polarsType\":\"pl.String\"},{\"name\":\"posting_date\",\"polarsType\":\"pl.Date\"},{\"name\":\"document_date\",\"polarsType\":\"pl.Date\"},{\"name\":\"reference\",\"polarsType\":\"pl.String\"},{\"name\":\"amount\",\"polarsType\":\"pl.Decimal(18,2)\"},{\"name\":\"currency\",\"polarsType\":\"pl.String\"},{\"name\":\"text\",\"polarsType\":\"pl.String\"},{\"name\":\"assignment\",\"polarsType\":\"pl.String\"}]",
+      "partitionColumnsJson": "[]"
+    },
+    {
+      "code": "BANK_STMT",
+      "name": "Bank Statement",
+      "description": "Corporate operating checking account transactions from JPMorgan Chase bank feed",
+      "gcsPrefix": "canonical/bank_stmt",
+      "schemaColumnsJson": "[{\"name\":\"company_code\",\"polarsType\":\"pl.String\"},{\"name\":\"statement_no\",\"polarsType\":\"pl.String\"},{\"name\":\"value_date\",\"polarsType\":\"pl.Date\"},{\"name\":\"booking_date\",\"polarsType\":\"pl.Date\"},{\"name\":\"bank_reference\",\"polarsType\":\"pl.String\"},{\"name\":\"transaction_type\",\"polarsType\":\"pl.String\"},{\"name\":\"amount\",\"polarsType\":\"pl.Decimal(18,2)\"},{\"name\":\"currency\",\"polarsType\":\"pl.String\"},{\"name\":\"description\",\"polarsType\":\"pl.String\"}]",
+      "partitionColumnsJson": "[]"
+    }
+  ],
+  "parsers": [
+    {
+      "name": "SAP GL Parser",
+      "fileFormat": "csv",
+      "pipelineJson": "{\n  \"dslVersion\": \"2.0\",\n  \"pipeline\": {\n    \"id\": \"e4a7a8d5-7e04-4c6c-829d-4be66a011001\",\n    \"revision\": 1,\n    \"name\": \"SAP_GL_Parser\"\n  },\n  \"inputs\": [\n    {\n      \"id\": \"main\",\n      \"connector\": \"csv\",\n      \"binding\": \"execution.input\",\n      \"options\": {\n        \"hasHeader\": true,\n        \"delimiter\": \",\"\n      }\n    }\n  ],\n  \"steps\": [\n    {\n      \"id\": \"__studio\",\n      \"op\": \"profile\",\n      \"enabled\": false,\n      \"args\": {\n        \"studio\": {\n          \"description\": \"Parser for SAP ERP General Ledger transactions\",\n          \"expectedFormat\": \"csv\",\n          \"columns\": [\n            { \"name\": \"company_code\", \"included\": true },\n            { \"name\": \"gl_account\", \"included\": true },\n            { \"name\": \"document_no\", \"included\": true },\n            { \"name\": \"posting_date\", \"included\": true },\n            { \"name\": \"document_date\", \"included\": true },\n            { \"name\": \"reference\", \"included\": true },\n            { \"name\": \"amount\", \"included\": true },\n            { \"name\": \"currency\", \"included\": true },\n            { \"name\": \"text\", \"included\": true },\n            { \"name\": \"assignment\", \"included\": true }\n          ],\n          \"mappings\": [\n            { \"sourceColumn\": \"company_code\", \"target\": \"company_code\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"gl_account\", \"target\": \"gl_account\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"document_no\", \"target\": \"document_no\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"posting_date\", \"target\": \"posting_date\", \"targetType\": \"date\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"document_date\", \"target\": \"document_date\", \"targetType\": \"date\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"reference\", \"target\": \"reference\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"amount\", \"target\": \"amount\", \"targetType\": \"decimal\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"currency\", \"target\": \"currency\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"text\", \"target\": \"text\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"assignment\", \"target\": \"assignment\", \"targetType\": \"string\", \"sourceKind\": \"column\" }\n          ],\n          \"steps\": []\n        }\n      }\n    }\n  ],\n  \"quality\": {\n    \"defaultErrorAction\": \"quarantine\",\n    \"quarantine\": { \"enabled\": true, \"relativePath\": \"_quarantine\" }\n  },\n  \"sink\": {\n    \"connector\": \"parquet\",\n    \"binding\": \"execution.output\",\n    \"writeMode\": \"overwrite\"\n  }\n}",
+      "outputGcsPrefix": "canonical/sap_gl",
+      "isActive": true
+    },
+    {
+      "name": "Bank Statement Parser",
+      "fileFormat": "csv",
+      "pipelineJson": "{\n  \"dslVersion\": \"2.0\",\n  \"pipeline\": {\n    \"id\": \"b3c8f9e1-6d02-4b5b-918c-3af55b022002\",\n    \"revision\": 1,\n    \"name\": \"Bank_Statement_Parser\"\n  },\n  \"inputs\": [\n    {\n      \"id\": \"main\",\n      \"connector\": \"csv\",\n      \"binding\": \"execution.input\",\n      \"options\": {\n        \"hasHeader\": true,\n        \"delimiter\": \",\"\n      }\n    }\n  ],\n  \"steps\": [\n    {\n      \"id\": \"__studio\",\n      \"op\": \"profile\",\n      \"enabled\": false,\n      \"args\": {\n        \"studio\": {\n          \"description\": \"Parser for JPMorgan Chase corporate bank statements\",\n          \"expectedFormat\": \"csv\",\n          \"columns\": [\n            { \"name\": \"company_code\", \"included\": true },\n            { \"name\": \"statement_no\", \"included\": true },\n            { \"name\": \"value_date\", \"included\": true },\n            { \"name\": \"booking_date\", \"included\": true },\n            { \"name\": \"bank_reference\", \"included\": true },\n            { \"name\": \"transaction_type\", \"included\": true },\n            { \"name\": \"amount\", \"included\": true },\n            { \"name\": \"currency\", \"included\": true },\n            { \"name\": \"description\", \"included\": true }\n          ],\n          \"mappings\": [\n            { \"sourceColumn\": \"company_code\", \"target\": \"company_code\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"statement_no\", \"target\": \"statement_no\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"value_date\", \"target\": \"value_date\", \"targetType\": \"date\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"booking_date\", \"target\": \"booking_date\", \"targetType\": \"date\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"bank_reference\", \"target\": \"bank_reference\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"transaction_type\", \"target\": \"transaction_type\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"amount\", \"target\": \"amount\", \"targetType\": \"decimal\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"currency\", \"target\": \"currency\", \"targetType\": \"string\", \"sourceKind\": \"column\" },\n            { \"sourceColumn\": \"description\", \"target\": \"description\", \"targetType\": \"string\", \"sourceKind\": \"column\" }\n          ],\n          \"steps\": []\n        }\n      }\n    }\n  ],\n  \"quality\": {\n    \"defaultErrorAction\": \"quarantine\",\n    \"quarantine\": { \"enabled\": true, \"relativePath\": \"_quarantine\" }\n  },\n  \"sink\": {\n    \"connector\": \"parquet\",\n    \"binding\": \"execution.output\",\n    \"writeMode\": \"overwrite\"\n  }\n}",
+      "outputGcsPrefix": "canonical/bank_stmt",
+      "isActive": true
+    }
+  ]
+}

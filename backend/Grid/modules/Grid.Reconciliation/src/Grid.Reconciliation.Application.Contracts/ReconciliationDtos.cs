@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Grid.Reconciliation;
@@ -379,4 +380,80 @@ public class AiFallbackDecisionDto
     public List<string> FilesToSkip { get; set; } = [];
 
     public List<ParserProposalItemDto> AdjustedParsers { get; set; } = [];
+}
+
+public class ProfileBundleDto
+{
+    public int FormatVersion { get; set; } = 1;
+
+    public DateTime? ExportedAt { get; set; }
+
+    public BundlePackageDto? Package { get; set; }
+
+    public BundleProfileDto Profile { get; set; } = new();
+
+    public List<BundleDatasetDto> Datasets { get; set; } = [];
+
+    public List<BundleParserDto> Parsers { get; set; } = [];
+}
+
+public class BundlePackageDto
+{
+    public string Name { get; set; } = "";
+
+    public string? Description { get; set; }
+}
+
+public class BundleProfileDto
+{
+    public string Name { get; set; } = "";
+
+    public string? Description { get; set; }
+
+    public int Version { get; set; }
+
+    public string Status { get; set; } = "Draft";
+
+    public string DefinitionJson { get; set; } = "{}";
+
+    public bool CreatedWithAi { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtraProperties { get; set; } = [];
+}
+
+public class BundleDatasetDto
+{
+    public string Code { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public string Description { get; set; } = "";
+
+    public string GcsPrefix { get; set; } = "";
+
+    public string SchemaColumnsJson { get; set; } = "[]";
+
+    public string PartitionColumnsJson { get; set; } = "[]";
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtraProperties { get; set; } = [];
+}
+
+public class BundleParserDto
+{
+    public string Name { get; set; } = "";
+
+    public string FileFormat { get; set; } = "csv";
+
+    public string PipelineJson { get; set; } = "{}";
+
+    public string OutputGcsPrefix { get; set; } = "";
+
+    public bool IsActive { get; set; } = true;
+
+    public bool CreatedWithAi { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtraProperties { get; set; } = [];
 }

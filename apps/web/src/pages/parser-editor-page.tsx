@@ -13,7 +13,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { ErrorNote } from "@/components/error-note"
 import { ApiError, api } from "@/lib/api"
@@ -97,7 +97,23 @@ function ParserStudio({
   const [activeStepId, setActiveStepId] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const dataset = datasets.find((item) => item.id === studio.datasetId)
+  const parserPrefix = parser?.outputGcsPrefix?.trim().replace(/^\/+|\/+$/g, "").toLowerCase()
+  const cleanParserName = (parser?.name || name).toLowerCase().replace(/[^a-z0-9]/g, "")
+  const dataset = datasets.find((item) => {
+    if (studio.datasetId && item.id === studio.datasetId) return true
+    if (parserPrefix && item.gcsPrefix?.trim().replace(/^\/+|\/+$/g, "").toLowerCase() === parserPrefix) return true
+    const cleanCode = item.code.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
+    const cleanName = item.name.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
+    if (cleanCode && (cleanParserName.includes(cleanCode) || cleanCode.includes(cleanParserName))) return true
+    if (cleanName && (cleanParserName.includes(cleanName) || cleanName.includes(cleanParserName))) return true
+    return false
+  })
+
+  useEffect(() => {
+    if (dataset && studio.datasetId !== dataset.id) {
+      setStudio((prev) => ({ ...prev, datasetId: dataset.id }))
+    }
+  }, [dataset, studio.datasetId])
   const sources = studio.columns
     .filter((column) => column.included)
     .map((column) => column.name)

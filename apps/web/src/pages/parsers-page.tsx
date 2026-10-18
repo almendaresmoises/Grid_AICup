@@ -9,6 +9,22 @@ import { api } from "@/lib/api"
 import { type CanonicalDataset, type ParserConfiguration } from "@/lib/canonical"
 import { readStudio } from "@/lib/parser-studio"
 
+function resolveDatasetForParser(parser: ParserConfiguration, datasets: CanonicalDataset[] = []) {
+  const studio = readStudio(parser.pipelineJson)?.studio
+  const parserPrefix = parser.outputGcsPrefix?.trim().replace(/^\/+|\/+$/g, "").toLowerCase()
+  const cleanParserName = parser.name.toLowerCase().replace(/[^a-z0-9]/g, "")
+  return datasets.find((item) => {
+    if (studio?.datasetId && item.id === studio.datasetId) return true
+    const itemPrefix = item.gcsPrefix?.trim().replace(/^\/+|\/+$/g, "").toLowerCase()
+    if (parserPrefix && itemPrefix && itemPrefix === parserPrefix) return true
+    const cleanCode = item.code.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
+    const cleanName = item.name.trim().toLowerCase().replace(/[^a-z0-9]/g, "")
+    if (cleanCode && (cleanParserName.includes(cleanCode) || cleanCode.includes(cleanParserName))) return true
+    if (cleanName && (cleanParserName.includes(cleanName) || cleanName.includes(cleanParserName))) return true
+    return false
+  })
+}
+
 export function ParsersPage() {
   const queryClient = useQueryClient()
   const parsers = useQuery({
@@ -27,8 +43,7 @@ export function ParsersPage() {
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return (parsers.data ?? []).filter((parser) => {
-      const studio = readStudio(parser.pipelineJson)?.studio
-      const dataset = datasets.data?.find((item) => item.id === studio?.datasetId)
+      const dataset = resolveDatasetForParser(parser, datasets.data ?? [])
       const haystack = [parser.name, parser.fileFormat, dataset?.code, dataset?.name, parser.outputGcsPrefix, parser.createdWithAi ? "ai" : "manual"].join(" ").toLowerCase()
       return !needle || haystack.includes(needle)
     })
@@ -80,7 +95,7 @@ export function ParsersPage() {
               <tbody>
                 {rows.map((parser) => {
                   const studio = readStudio(parser.pipelineJson)?.studio
-                  const dataset = datasets.data?.find((item) => item.id === studio?.datasetId)
+                  const dataset = resolveDatasetForParser(parser, datasets.data ?? [])
                   return (
                     <tr key={parser.id} className="hover:bg-muted/30 border-b last:border-0">
                       <td className="px-4 py-3">

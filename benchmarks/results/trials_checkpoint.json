@@ -1,0 +1,53 @@
+[
+  {
+    "scenario": "simple",
+    "trial": 1,
+    "total_records": 100000,
+    "parse_duration_sec": 1.4,
+    "gl_parse_sec": 1.4,
+    "bank_parse_sec": 1.31,
+    "recon_duration_sec": 152.59,
+    "total_duration_sec": 154.0,
+    "recon_throughput_rps": 655.3,
+    "overall_throughput_rps": 649.4,
+    "matched_records": 75000,
+    "unresolved_records": 25000,
+    "ambiguous_records": 0,
+    "matched_groups": 37500,
+    "timestamp": "2026-10-18T14:38:46Z"
+  },
+  {
+    "scenario": "simple",
+    "trial": 2,
+    "total_records": 100000,
+    "parse_duration_sec": 1.37,
+    "gl_parse_sec": 1.37,
+    "bank_parse_sec": 1.33,
+    "recon_duration_sec": 153.81,
+    "total_duration_sec": 155.18,
+    "recon_throughput_rps": 650.2,
+    "overall_throughput_rps": 644.4,
+    "matched_records": 75000,
+    "unresolved_records": 25000,
+    "ambiguous_records": 0,
+    "matched_groups": 37500,
+    "timestamp": "2026-10-18T14:41:21Z"
+  },
+  {
+    "scenario": "simple",
+    "trial": 3,
+    "total_records": 100000,
+    "parse_duration_sec": 1.37,
+    "gl_parse_sec": 1.36,
+    "bank_parse_sec": 1.28,
+    "recon_duration_sec": 166.67,
+    "total_duration_sec": 168.03,
+    "recon_throughput_rps": 600.0,
+    "overall_throughput_rps": 595.1,
+    "matched_records": 75000,
+    "unresolved_records": 25000,
+    "ambiguous_records": 0,
+    "matched_groups": 37500,
+    "timestamp": "2026-10-18T14:44:09Z"
+  }
+]

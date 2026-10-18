@@ -1,5 +1,8 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Grid.Datasets;
+using Grid.Parsers;
 using Microsoft.AspNetCore.Authorization;
 using Volo.Abp.Application.Services;
 using Volo.Abp;
@@ -305,6 +308,8 @@ public class ProfileAppService : ApplicationService, IProfileAppService
     private readonly IRepository<MatchGroup, Guid> _groups;
     private readonly IRepository<RunRecord, Guid> _records;
     private readonly ReconciliationData _data;
+    private IRepository<CanonicalDataset, Guid>? _canonicalDatasets;
+    private IRepository<ParserConfiguration, Guid>? _parsers;
 
     public ProfileAppService(
         IRepository<Profile, Guid> profiles,
@@ -313,7 +318,9 @@ public class ProfileAppService : ApplicationService, IProfileAppService
         IRepository<ReconciliationRun, Guid> runs,
         IRepository<MatchGroup, Guid> groups,
         IRepository<RunRecord, Guid> records,
-        ReconciliationData data)
+        ReconciliationData data,
+        IRepository<CanonicalDataset, Guid>? canonicalDatasets = null,
+        IRepository<ParserConfiguration, Guid>? parsers = null)
     {
         _profiles = profiles;
         _packages = packages;
@@ -322,7 +329,14 @@ public class ProfileAppService : ApplicationService, IProfileAppService
         _groups = groups;
         _records = records;
         _data = data;
+        _canonicalDatasets = canonicalDatasets;
+        _parsers = parsers;
     }
+
+    private IRepository<CanonicalDataset, Guid> CanonicalDatasets =>
+        _canonicalDatasets ??= LazyServiceProvider.LazyGetRequiredService<IRepository<CanonicalDataset, Guid>>();
+    private IRepository<ParserConfiguration, Guid> Parsers =>
+        _parsers ??= LazyServiceProvider.LazyGetRequiredService<IRepository<ParserConfiguration, Guid>>();
 
     public async Task DeleteAsync(Guid id)
     {
@@ -389,6 +403,515 @@ public class ProfileAppService : ApplicationService, IProfileAppService
         await _profiles.UpdateAsync(profile, autoSave: true);
 
         return await GetAsync(id);
+    }
+
+    public async Task<ProfileBundleDto> GetBundleAsync(Guid id)
+    {
+        var profile = await _profiles.GetAsync(id);
+        var package = await _packages.GetAsync(profile.PackageId);
+        var definition = Parse(profile.DefinitionJson);
+
+        var bundle = new ProfileBundleDto
+        {
+            FormatVersion = 1,
+            ExportedAt = DateTime.UtcNow,
+            Package = new BundlePackageDto
+            {
+                Name = package.Name,
+                Description = package.Description,
+            },
+            Profile = new BundleProfileDto
+            {
+                Name = profile.Name,
+                Description = package.Description,
+                Version = profile.Version,
+                Status = profile.Status.ToString(),
+                DefinitionJson = profile.DefinitionJson,
+                CreatedWithAi = MarkedByAi(profile.ExtraProperties),
+            },
+            Datasets = [],
+            Parsers = [],
+        };
+
+        var allDatasets = await CanonicalDatasets.GetListAsync();
+        var allParsers = await Parsers.GetListAsync();
+
+        var referencedDatasets = new HashSet<string>(definition.Datasets ?? [], StringComparer.OrdinalIgnoreCase);
+
+        var matchingCanonicalDatasets = allDatasets
+            .Where(d => referencedDatasets.Contains(d.Code))
+            .ToList();
+
+        var prefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ds in matchingCanonicalDatasets)
+        {
+            bundle.Datasets.Add(new BundleDatasetDto
+            {
+                Code = ds.Code,
+                Name = ds.Name,
+                Description = ds.Description,
+                GcsPrefix = ds.GcsPrefix,
+                SchemaColumnsJson = ds.SchemaColumnsJson,
+                PartitionColumnsJson = ds.PartitionColumnsJson,
+            });
+
+            if (!string.IsNullOrWhiteSpace(ds.GcsPrefix))
+            {
+                prefixes.Add(NormalizePrefix(ds.GcsPrefix));
+            }
+        }
+
+        foreach (var parser in allParsers)
+        {
+            var parserPrefix = NormalizePrefix(parser.OutputGcsPrefix);
+            var studioId = TryGetStudioDatasetId(parser.PipelineJson);
+
+            var matchesDataset = matchingCanonicalDatasets.FirstOrDefault(ds =>
+                (!string.IsNullOrWhiteSpace(parserPrefix) && NormalizePrefix(ds.GcsPrefix) == parserPrefix) ||
+                (studioId.HasValue && ds.Id == studioId.Value) ||
+                parser.Name.Replace(" ", "").Replace("_", "").Contains(ds.Code.Replace(" ", "").Replace("_", ""), StringComparison.OrdinalIgnoreCase) ||
+                ds.Code.Replace(" ", "").Replace("_", "").Contains(parser.Name.Replace(" ", "").Replace("_", ""), StringComparison.OrdinalIgnoreCase)
+            );
+
+            if (matchesDataset != null)
+            {
+                var outputPrefix = !string.IsNullOrWhiteSpace(parser.OutputGcsPrefix)
+                    ? parser.OutputGcsPrefix
+                    : matchesDataset.GcsPrefix;
+
+                bundle.Parsers.Add(new BundleParserDto
+                {
+                    Name = parser.Name,
+                    FileFormat = parser.FileFormat,
+                    PipelineJson = parser.PipelineJson,
+                    OutputGcsPrefix = outputPrefix,
+                    IsActive = parser.IsActive,
+                    CreatedWithAi = MarkedByAi(parser.ExtraProperties),
+                });
+            }
+        }
+
+        return bundle;
+    }
+
+    public async Task<ProfileDto> ImportBundleAsync(ProfileBundleDto input)
+    {
+        if (input == null)
+        {
+            throw new UserFriendlyException("Bundle payload cannot be null.");
+        }
+
+        input.Profile ??= new BundleProfileDto();
+
+        var definitionJson = input.Profile.DefinitionJson;
+        if ((string.IsNullOrWhiteSpace(definitionJson) || definitionJson == "{}") &&
+            input.Profile.ExtraProperties.TryGetValue("definition", out var defEl) &&
+            defEl.ValueKind == JsonValueKind.Object)
+        {
+            definitionJson = defEl.GetRawText();
+        }
+
+        var definition = Parse(definitionJson);
+
+        var profileName = !string.IsNullOrWhiteSpace(input.Profile.Name)
+            ? input.Profile.Name.Trim()
+            : !string.IsNullOrWhiteSpace(definition.Name)
+                ? definition.Name.Trim()
+                : !string.IsNullOrWhiteSpace(input.Package?.Name)
+                    ? input.Package.Name.Trim()
+                    : "Imported Profile";
+
+        definition.Name = profileName;
+
+        // Upsert Datasets
+        if (input.Datasets != null && input.Datasets.Count > 0)
+        {
+            var existingDatasets = await CanonicalDatasets.GetListAsync();
+            foreach (var dsDto in input.Datasets)
+            {
+                var code = (dsDto.Code ?? "").Trim().ToUpperInvariant();
+                if (string.IsNullOrEmpty(code)) continue;
+
+                var schemaJson = dsDto.SchemaColumnsJson;
+                if ((string.IsNullOrWhiteSpace(schemaJson) || schemaJson == "[]") &&
+                    dsDto.ExtraProperties.TryGetValue("schemaColumns", out var schemaEl) &&
+                    schemaEl.ValueKind == JsonValueKind.Array)
+                {
+                    schemaJson = schemaEl.GetRawText();
+                }
+
+                var partitionJson = dsDto.PartitionColumnsJson;
+                if ((string.IsNullOrWhiteSpace(partitionJson) || partitionJson == "[]") &&
+                    dsDto.ExtraProperties.TryGetValue("partitionColumns", out var partEl) &&
+                    partEl.ValueKind == JsonValueKind.Array)
+                {
+                    partitionJson = partEl.GetRawText();
+                }
+
+                var name = string.IsNullOrWhiteSpace(dsDto.Name) ? code : dsDto.Name.Trim();
+                var description = dsDto.Description?.Trim() ?? "";
+                var gcsPrefix = string.IsNullOrWhiteSpace(dsDto.GcsPrefix) ? $"canonical/{code.ToLowerInvariant()}" : dsDto.GcsPrefix.Trim().Trim('/').ToLowerInvariant();
+
+                var match = existingDatasets.FirstOrDefault(d => string.Equals(d.Code, code, StringComparison.OrdinalIgnoreCase));
+                if (match != null)
+                {
+                    match.Name = name;
+                    match.Description = description;
+                    if (!string.IsNullOrWhiteSpace(schemaJson) && schemaJson != "[]")
+                    {
+                        match.SchemaColumnsJson = schemaJson;
+                    }
+                    if (!string.IsNullOrWhiteSpace(partitionJson))
+                    {
+                        match.PartitionColumnsJson = partitionJson;
+                    }
+                    var prefixConflict = existingDatasets.Any(d => d.Id != match.Id && string.Equals(d.GcsPrefix, gcsPrefix, StringComparison.OrdinalIgnoreCase));
+                    if (!prefixConflict)
+                    {
+                        match.GcsPrefix = gcsPrefix;
+                    }
+                    await CanonicalDatasets.UpdateAsync(match, autoSave: true);
+                }
+                else
+                {
+                    var prefixConflict = existingDatasets.Any(d => string.Equals(d.GcsPrefix, gcsPrefix, StringComparison.OrdinalIgnoreCase));
+                    if (prefixConflict)
+                    {
+                        gcsPrefix = $"canonical/{code.ToLowerInvariant()}_{Guid.NewGuid():N}";
+                    }
+                    var newDataset = new CanonicalDataset
+                    {
+                        Code = code,
+                        Name = name,
+                        Description = description,
+                        GcsPrefix = gcsPrefix,
+                        SchemaColumnsJson = string.IsNullOrWhiteSpace(schemaJson) ? "[]" : schemaJson,
+                        PartitionColumnsJson = string.IsNullOrWhiteSpace(partitionJson) ? "[]" : partitionJson,
+                    };
+                    await CanonicalDatasets.InsertAsync(newDataset, autoSave: true);
+                    existingDatasets.Add(newDataset);
+                }
+            }
+        }
+
+        // Upsert Parsers
+        if (input.Parsers != null && input.Parsers.Count > 0)
+        {
+            var existingParsers = await Parsers.GetListAsync();
+            var allDatasets = await CanonicalDatasets.GetListAsync();
+            foreach (var parserDto in input.Parsers)
+            {
+                var parserName = (parserDto.Name ?? "").Trim();
+                if (string.IsNullOrEmpty(parserName)) continue;
+
+                var pipelineJson = parserDto.PipelineJson;
+                if ((string.IsNullOrWhiteSpace(pipelineJson) || pipelineJson == "{}") &&
+                    parserDto.ExtraProperties.TryGetValue("pipeline", out var pipeEl) &&
+                    pipeEl.ValueKind == JsonValueKind.Object)
+                {
+                    pipelineJson = pipeEl.GetRawText();
+                }
+
+                var fileFormat = string.IsNullOrWhiteSpace(parserDto.FileFormat) ? "csv" : parserDto.FileFormat.Trim();
+                var outputGcsPrefix = (parserDto.OutputGcsPrefix ?? "").Trim().Trim('/');
+
+                var matchingDataset = allDatasets.FirstOrDefault(d =>
+                    !string.IsNullOrWhiteSpace(outputGcsPrefix) &&
+                    string.Equals(d.GcsPrefix.Trim().Trim('/'), outputGcsPrefix, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingDataset == null)
+                {
+                    matchingDataset = allDatasets.FirstOrDefault(d =>
+                    {
+                        var normName = parserName.Replace(" ", "").Replace("_", "").ToLowerInvariant();
+                        var normCode = d.Code.Replace(" ", "").Replace("_", "").ToLowerInvariant();
+                        var normDsName = d.Name.Replace(" ", "").Replace("_", "").ToLowerInvariant();
+                        return normName.Contains(normCode) || normCode.Contains(normName) ||
+                               normName.Contains(normDsName) || normDsName.Contains(normName);
+                    });
+                }
+
+                if (matchingDataset != null)
+                {
+                    outputGcsPrefix = matchingDataset.GcsPrefix.Trim().Trim('/');
+                    pipelineJson = SynchronizeStudioDatasetId(pipelineJson, matchingDataset);
+                }
+
+                var match = existingParsers.FirstOrDefault(p => string.Equals(p.Name, parserName, StringComparison.OrdinalIgnoreCase));
+                if (match != null)
+                {
+                    match.FileFormat = fileFormat;
+                    if (!string.IsNullOrWhiteSpace(pipelineJson) && pipelineJson != "{}")
+                    {
+                        match.PipelineJson = pipelineJson;
+                    }
+                    if (!string.IsNullOrWhiteSpace(outputGcsPrefix))
+                    {
+                        match.OutputGcsPrefix = outputGcsPrefix;
+                    }
+                    match.IsActive = parserDto.IsActive;
+                    await Parsers.UpdateAsync(match, autoSave: true);
+                }
+                else
+                {
+                    var newParser = new ParserConfiguration
+                    {
+                        Name = parserName,
+                        FileFormat = fileFormat,
+                        PipelineJson = string.IsNullOrWhiteSpace(pipelineJson) ? "{}" : pipelineJson,
+                        OutputGcsPrefix = outputGcsPrefix,
+                        IsActive = parserDto.IsActive,
+                    };
+                    if (parserDto.CreatedWithAi)
+                    {
+                        newParser.ExtraProperties["CreatedWithAi"] = true;
+                    }
+                    await Parsers.InsertAsync(newParser, autoSave: true);
+                    existingParsers.Add(newParser);
+                }
+            }
+        }
+
+        // Create Package
+        var packageName = !string.IsNullOrWhiteSpace(input.Package?.Name)
+            ? input.Package.Name.Trim()
+            : profileName;
+
+        var package = new Package
+        {
+            Name = packageName,
+            Description = input.Package?.Description ?? input.Profile.Description,
+        };
+        await _packages.InsertAsync(package, autoSave: true);
+
+        // Create Profile
+        var definitionFinalJson = ProfileJson.Write(definition);
+        var isApproved = string.Equals(input.Profile.Status, "Approved", StringComparison.OrdinalIgnoreCase);
+        var profile = new Profile
+        {
+            PackageId = package.Id,
+            Name = profileName,
+            Version = input.Profile.Version,
+            Status = isApproved ? ProfileStatus.Approved : ProfileStatus.Draft,
+            DefinitionJson = definitionFinalJson,
+            ApprovedDefinitionJson = isApproved ? definitionFinalJson : null,
+        };
+
+        if (input.Profile.CreatedWithAi)
+        {
+            profile.ExtraProperties["CreatedWithAi"] = true;
+        }
+
+        await _profiles.InsertAsync(profile, autoSave: true);
+
+        return Map(profile, package, false);
+    }
+
+    private static string NormalizePrefix(string? prefix)
+    {
+        return (prefix ?? "").Trim().Trim('/').ToLowerInvariant();
+    }
+
+    private static Guid? TryGetStudioDatasetId(string? pipelineJson)
+    {
+        if (string.IsNullOrWhiteSpace(pipelineJson)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(pipelineJson);
+            if (document.RootElement.TryGetProperty("steps", out var steps) && steps.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var step in steps.EnumerateArray())
+                {
+                    if (step.TryGetProperty("id", out var id) && id.GetString() == "__studio" &&
+                        step.TryGetProperty("args", out var args) && args.TryGetProperty("studio", out var studio) &&
+                        studio.TryGetProperty("datasetId", out var value) && Guid.TryParse(value.GetString(), out var parsedId))
+                    {
+                        return parsedId;
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+        return null;
+    }
+
+    private static string SynchronizeStudioDatasetId(string? pipelineJson, CanonicalDataset dataset)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(pipelineJson) || pipelineJson == "{}")
+            {
+                return GenerateStarterPipelineJson(dataset);
+            }
+
+            var node = JsonNode.Parse(pipelineJson);
+            if (node is not JsonObject root)
+            {
+                return GenerateStarterPipelineJson(dataset);
+            }
+
+            var steps = root["steps"] as JsonArray;
+            if (steps == null)
+            {
+                steps = new JsonArray();
+                root["steps"] = steps;
+            }
+
+            JsonObject? studioStep = null;
+            foreach (var step in steps)
+            {
+                if (step is JsonObject stepObj && stepObj["id"]?.GetValue<string>() == "__studio")
+                {
+                    studioStep = stepObj;
+                    break;
+                }
+            }
+
+            if (studioStep == null)
+            {
+                studioStep = new JsonObject
+                {
+                    ["id"] = "__studio",
+                    ["op"] = "profile",
+                    ["enabled"] = false,
+                    ["args"] = new JsonObject
+                    {
+                        ["studio"] = new JsonObject
+                        {
+                            ["datasetId"] = dataset.Id.ToString()
+                        }
+                    }
+                };
+                steps.Add(studioStep);
+            }
+            else
+            {
+                var args = studioStep["args"] as JsonObject;
+                if (args == null)
+                {
+                    args = new JsonObject();
+                    studioStep["args"] = args;
+                }
+                var studio = args["studio"] as JsonObject;
+                if (studio == null)
+                {
+                    studio = new JsonObject();
+                    args["studio"] = studio;
+                }
+                studio["datasetId"] = dataset.Id.ToString();
+            }
+
+            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return GenerateStarterPipelineJson(dataset);
+        }
+    }
+
+    private static string GenerateStarterPipelineJson(CanonicalDataset dataset)
+    {
+        var pipelineId = Guid.NewGuid().ToString();
+        var safeCode = (dataset.Code ?? "dataset").Replace("-", "_").Replace(" ", "_");
+        
+        var columns = new JsonArray();
+        var mappings = new JsonArray();
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(dataset.SchemaColumnsJson))
+            {
+                using var doc = JsonDocument.Parse(dataset.SchemaColumnsJson);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var col in doc.RootElement.EnumerateArray())
+                    {
+                        if (col.TryGetProperty("name", out var nameProp))
+                        {
+                            var colName = nameProp.GetString() ?? "";
+                            if (!string.IsNullOrEmpty(colName))
+                            {
+                                columns.Add(new JsonObject { ["name"] = colName, ["included"] = true });
+                                var type = col.TryGetProperty("polarsType", out var pt) ? pt.GetString() ?? "string" : "string";
+                                mappings.Add(new JsonObject
+                                {
+                                    ["sourceColumn"] = colName,
+                                    ["target"] = colName,
+                                    ["targetType"] = type.ToLowerInvariant().Contains("date") ? "date" : (type.ToLowerInvariant().Contains("decimal") ? "decimal" : "string"),
+                                    ["sourceKind"] = "column"
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        var pipeline = new JsonObject
+        {
+            ["dslVersion"] = "2.0",
+            ["pipeline"] = new JsonObject
+            {
+                ["id"] = pipelineId,
+                ["revision"] = 1,
+                ["name"] = $"{safeCode}_Parser"
+            },
+            ["inputs"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "main",
+                    ["connector"] = "csv",
+                    ["binding"] = "execution.input",
+                    ["options"] = new JsonObject
+                    {
+                        ["hasHeader"] = true,
+                        ["delimiter"] = ","
+                    }
+                }
+            },
+            ["steps"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "__studio",
+                    ["op"] = "profile",
+                    ["enabled"] = false,
+                    ["args"] = new JsonObject
+                    {
+                        ["studio"] = new JsonObject
+                        {
+                            ["description"] = $"Parser for {dataset.Name}",
+                            ["datasetId"] = dataset.Id.ToString(),
+                            ["expectedFormat"] = "csv",
+                            ["columns"] = columns,
+                            ["mappings"] = mappings,
+                            ["steps"] = new JsonArray()
+                        }
+                    }
+                }
+            },
+            ["quality"] = new JsonObject
+            {
+                ["defaultErrorAction"] = "quarantine",
+                ["quarantine"] = new JsonObject
+                {
+                    ["enabled"] = true,
+                    ["relativePath"] = "_quarantine"
+                }
+            },
+            ["sink"] = new JsonObject
+            {
+                ["connector"] = "parquet",
+                ["binding"] = "execution.output",
+                ["writeMode"] = "overwrite"
+            }
+        };
+
+        return pipeline.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
     private static ProfileDefinition Parse(string json)
