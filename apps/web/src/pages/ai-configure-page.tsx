@@ -1,4 +1,5 @@
 import { Button } from "@workspace/ui/components/button"
+import { useQuery } from "@tanstack/react-query"
 import {
   AlertCircle,
   Bot,
@@ -16,7 +17,8 @@ import {
   Upload,
 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link, useNavigate } from "react-router"
+import { Link } from "react-router"
+import { ConfigurationReadiness } from "@/components/configuration-readiness"
 import { ErrorNote } from "@/components/error-note"
 import {
   datasetName,
@@ -25,14 +27,16 @@ import {
   isSupportedFile,
   isZipFile,
   resumeAiConfiguration,
+  restoreServerConfiguration,
   resetAiConfiguration,
-  runSampleReconciliation,
   startAiConfiguration,
   subscribeAiSession,
   STORAGE_KEY_CONTEXT,
   type AiSessionState,
 } from "@/lib/ai-config-session"
 import { inputClass, labelClass, textareaClass } from "@/lib/ui"
+import { api } from "@/lib/api"
+import type { ConfigurationJob } from "@/lib/ai-configuration"
 
 type LocalStagedFile = { id: string; file: File }
 
@@ -43,7 +47,7 @@ type LocalDatasetGroup = {
   files: LocalStagedFile[]
 }
 
-const DEFAULT_PRESET_CODES = ["POS", "GATEWAY", "BANK", "ERP", "LEDGER"]
+const DEFAULT_PRESET_CODES = ["POS", "GATEWAY", "BANK"]
 
 function createDefaultGroups(count: number): LocalDatasetGroup[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -60,7 +64,7 @@ function resizeGroups(
   current: LocalDatasetGroup[],
   targetCount: number
 ): LocalDatasetGroup[] {
-  const clamped = Math.max(2, Math.min(5, targetCount))
+  const clamped = Math.max(2, Math.min(3, targetCount))
   if (current.length === clamped) return current
   if (current.length < clamped) {
     const extra = Array.from({ length: clamped - current.length }, (_, idx) => {
@@ -82,46 +86,35 @@ function resizeGroups(
 const CONFIG_STEPS = [
   {
     id: 1,
-    title: "1. Inspect Samples",
-    desc: "1 parser per file: delimiters, headers, cleansers & AI anomaly fallback",
+    title: "1. Inspect files",
+    desc: "Propose mappings and explicit transformations per file",
   },
   {
     id: 2,
-    title: "2. AI Rule Drafting",
-    desc: "Gemini analyzes patterns & waterfall match rules",
+    title: "2. Create datasets",
+    desc: "Register source-backed canonical contracts per dataset group",
   },
   {
     id: 3,
-    title: "3. Create Datasets",
-    desc: "Register canonical schemas per dataset group",
+    title: "3. Create parsers",
+    desc: "Validate and compile each file's mapping pipeline",
   },
   {
     id: 4,
-    title: "4. Create Parsers",
-    desc: "Compile pipelines & map files into datasets",
+    title: "4. Upload files",
+    desc: "Queue every file and preserve its parser-run receipt",
   },
   {
     id: 5,
-    title: "5. Run ETL Pipeline",
-    desc: "Upload files & parse all records into storage",
+    title: "5. Validate and draft",
+    desc: "Server parses files, profiles outputs and previews evidence-based rules",
   },
   {
     id: 6,
-    title: "6. Finalize Profile",
-    desc: "Save package & multi-pass reconciliation profile",
+    title: "6. Ready for review or run",
+    desc: "Use the same validated revision and uploaded files",
   },
 ] as const
-
-const AI_THOUGHTS = [
-  "Analyzing file anatomy, delimiter detection, and trailer total rows…",
-  "Monitoring data anomalies: Gemini AI Fallback engine active for self-healing…",
-  "Synthesizing dedicated parser pipelines for each uploaded file…",
-  "Deriving unified canonical dataset schemas across assigned groups…",
-  "Correlating potential cross-dataset match keys and reference IDs…",
-  "Formulating waterfall cascade rules with fuzzy edit tolerances…",
-  "Evaluating dual-anchor perspectives (reference vs card PAN variations)…",
-  "Compiling Polars DSL 2.0 transformations and verifying contracts…",
-]
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B"
@@ -132,10 +125,16 @@ function formatBytes(bytes: number) {
 }
 
 export function AiConfigurePage() {
-  const navigate = useNavigate()
   const [session, setSession] = useState<AiSessionState>(getAiSessionState)
-  const [datasetCountMode, setDatasetCountMode] = useState<"2" | "3" | "custom">("2")
-  const [customCount, setCustomCount] = useState<number>(4)
+  const savedJobs = useQuery({
+    queryKey: ["ai-configurations"],
+    queryFn: () => api<ConfigurationJob[]>("/api/app/ai-configuration"),
+    refetchOnWindowFocus: true,
+  })
+  const [datasetCountMode, setDatasetCountMode] = useState<
+    "2" | "3" | "custom"
+  >("2")
+  const [customCount, setCustomCount] = useState<number>(3)
   const [groups, setGroups] = useState<LocalDatasetGroup[]>(() =>
     createDefaultGroups(2)
   )
@@ -146,8 +145,7 @@ export function AiConfigurePage() {
       return ""
     }
   })
-  const [thoughtIndex, setThoughtIndex] = useState(0)
-  const [sampleRunPending, setSampleRunPending] = useState(false)
+  const sampleRunPending = false
   const [sampleRunError, setSampleRunError] = useState("")
   const [fileError, setFileError] = useState("")
 
@@ -161,17 +159,6 @@ export function AiConfigurePage() {
     })
   }, [context])
 
-  // Rotating thought ticker during active execution
-  useEffect(() => {
-    if (session.status !== "running") return
-
-    const thoughtInterval = setInterval(() => {
-      setThoughtIndex((prev) => (prev + 1) % AI_THOUGHTS.length)
-    }, 2800)
-
-    return () => clearInterval(thoughtInterval)
-  }, [session.status])
-
   function handleCountModeChange(mode: "2" | "3" | "custom") {
     setDatasetCountMode(mode)
     const target = mode === "2" ? 2 : mode === "3" ? 3 : customCount
@@ -179,7 +166,7 @@ export function AiConfigurePage() {
   }
 
   function handleCustomCountChange(val: number) {
-    const clamped = Math.max(2, Math.min(5, val))
+    const clamped = Math.max(2, Math.min(3, val))
     setCustomCount(clamped)
     if (datasetCountMode === "custom") {
       setGroups((prev) => resizeGroups(prev, clamped))
@@ -217,7 +204,9 @@ export function AiConfigurePage() {
         }
       } else if (isSupportedFile(file.name)) {
         if (file.size === 0) {
-          setFileError(`File "${file.name}" was skipped (0 bytes, contains no data).`)
+          setFileError(
+            `File "${file.name}" was skipped (0 bytes, contains no data).`
+          )
           continue
         }
         filesToAdd.push({
@@ -291,7 +280,7 @@ export function AiConfigurePage() {
   )
   const canStart =
     groups.length >= 2 &&
-    groups.length <= 5 &&
+    groups.length <= 3 &&
     allGroupsHaveFiles &&
     allCodesUnique &&
     allCodesValid
@@ -319,22 +308,6 @@ export function AiConfigurePage() {
     setGroups(createDefaultGroups(datasetCountMode === "3" ? 3 : 2))
     setSampleRunError("")
     await resetAiConfiguration()
-  }
-
-  async function handleRunSamples() {
-    if (!session.completion) return
-    setSampleRunPending(true)
-    setSampleRunError("")
-    try {
-      const result = await runSampleReconciliation()
-      navigate(`/reconciliation/runs/${result.runId}/grid`)
-    } catch (caught) {
-      setSampleRunError(
-        caught instanceof Error ? caught.message : "The sample run failed."
-      )
-    } finally {
-      setSampleRunPending(false)
-    }
   }
 
   const isOngoing =
@@ -369,7 +342,7 @@ export function AiConfigurePage() {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-medium">Configure with AI</h1>
             {session.status === "running" ? (
-              <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary animate-pulse">
+              <span className="flex animate-pulse items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
                 <Loader2 className="size-3 animate-spin" />
                 Workflow in progress
               </span>
@@ -386,9 +359,10 @@ export function AiConfigurePage() {
             ) : null}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Divide your datasets and upload multiple files per dataset group (.csv, .xlsx, .txt).
-            The AI synthesizes 1 parser per file, registers canonical schemas,
-            and drafts multi-pass reconciliation cascades.
+            Divide your datasets and upload multiple files per dataset group
+            (.csv, .xlsx, .txt). The AI synthesizes 1 parser per file, registers
+            canonical schemas, and validates reconciliation rules against the
+            parsed outputs.
           </p>
         </div>
 
@@ -418,13 +392,44 @@ export function AiConfigurePage() {
         ) : null}
       </div>
 
+      {session.status !== "running" && Boolean(savedJobs.data?.length) && (
+        <details className="rounded border bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            Saved configurations
+          </summary>
+          <ul className="mt-3 flex flex-col gap-2 text-sm">
+            {savedJobs.data?.map((job) => (
+              <li
+                key={job.id}
+                className="flex items-center justify-between gap-2"
+              >
+                <span>
+                  {job.package?.name ||
+                    job.files.map((file) => file.fileName).join(", ")}{" "}
+                  · {job.status}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void restoreServerConfiguration(job.id)}
+                >
+                  Open
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       {/* Stepper Grid & AI Thoughts Banner */}
       {isOngoing || isCompleted ? (
         <article className="flex flex-col gap-3 rounded-lg border bg-card p-4">
           <div className="flex items-center justify-between border-b pb-2">
             <div className="flex items-center gap-2">
               <Bot className="size-4 text-primary" />
-              <span className="text-sm font-medium">Configuration Workflow</span>
+              <span className="text-sm font-medium">
+                Configuration Workflow
+              </span>
               {isCompleted ? (
                 <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                   Completed
@@ -435,8 +440,8 @@ export function AiConfigurePage() {
               {isCompleted
                 ? "6 of 6 steps completed"
                 : session.currentStep > 0
-                ? `Step ${Math.min(session.currentStep, 6)} of 6`
-                : "Ready"}
+                  ? `Step ${Math.min(session.currentStep, 6)} of 6`
+                  : "Ready"}
             </span>
           </div>
 
@@ -462,25 +467,25 @@ export function AiConfigurePage() {
                     isCurrent
                       ? "border-primary bg-primary/5 text-primary"
                       : isDone
-                      ? "border-emerald-500/30 bg-emerald-500/5 text-foreground"
-                      : isPaused
-                      ? "border-amber-500/40 bg-amber-500/5 text-foreground"
-                      : isFailed
-                      ? "border-destructive bg-destructive/5 text-destructive"
-                      : "border-border/60 bg-muted/20 text-muted-foreground opacity-60"
+                        ? "border-emerald-500/30 bg-emerald-500/5 text-foreground"
+                        : isPaused
+                          ? "border-amber-500/40 bg-amber-500/5 text-foreground"
+                          : isFailed
+                            ? "border-destructive bg-destructive/5 text-destructive"
+                            : "border-border/60 bg-muted/20 text-muted-foreground opacity-60"
                   }`}
                 >
                   <div className="flex items-center gap-1.5 font-medium">
                     {isCurrent ? (
-                      <Loader2 className="size-3.5 animate-spin text-primary shrink-0" />
+                      <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
                     ) : isDone ? (
-                      <CheckCircle2 className="size-3.5 text-emerald-500 shrink-0" />
+                      <CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" />
                     ) : isPaused ? (
-                      <Clock className="size-3.5 text-amber-500 shrink-0" />
+                      <Clock className="size-3.5 shrink-0 text-amber-500" />
                     ) : isFailed ? (
-                      <AlertCircle className="size-3.5 text-destructive shrink-0" />
+                      <AlertCircle className="size-3.5 shrink-0 text-destructive" />
                     ) : (
-                      <Circle className="size-3.5 text-muted-foreground/40 shrink-0" />
+                      <Circle className="size-3.5 shrink-0 text-muted-foreground/40" />
                     )}
                     <span className="truncate">{step.title}</span>
                   </div>
@@ -501,15 +506,15 @@ export function AiConfigurePage() {
           {session.status === "running" ? (
             <div className="flex items-center gap-2.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
               <Sparkles
-                className="size-4 animate-spin text-amber-500 shrink-0"
+                className="size-4 shrink-0 animate-spin text-amber-500"
                 style={{ animationDuration: "3s" }}
               />
               <div className="flex flex-1 items-center justify-between gap-2 overflow-hidden">
                 <span className="truncate italic transition-all duration-300">
-                  {AI_THOUGHTS[thoughtIndex % AI_THOUGHTS.length]}
+                  {session.stepMessage}
                 </span>
                 <span className="shrink-0 font-mono text-[11px] opacity-75">
-                  <Clock className="inline mr-1 size-3" />
+                  <Clock className="mr-1 inline size-3" />
                   {session.elapsedSeconds}s
                 </span>
               </div>
@@ -518,22 +523,26 @@ export function AiConfigurePage() {
 
           {/* AI Fallback Decision Engine Callout */}
           {session.latestAiDecision ? (
-            <div className="flex flex-col gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs text-cyan-950 dark:text-cyan-100 shadow-xs">
+            <div className="flex flex-col gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs text-cyan-950 shadow-xs dark:text-cyan-100">
               <div className="flex items-center gap-2">
-                <Bot className="size-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
-                <span className="font-semibold uppercase tracking-wider text-[11px] text-cyan-700 dark:text-cyan-300">
+                <Bot className="size-4 shrink-0 text-cyan-600 dark:text-cyan-400" />
+                <span className="text-[11px] font-semibold tracking-wider text-cyan-700 uppercase dark:text-cyan-300">
                   Autonomous AI Fallback Decision Engine
                 </span>
-                <span className="ml-auto rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-mono font-medium text-cyan-800 dark:text-cyan-200">
+                <span className="ml-auto rounded-full bg-cyan-500/20 px-2 py-0.5 font-mono text-[10px] font-medium text-cyan-800 dark:text-cyan-200">
                   {session.latestAiDecision.actionTaken}
                 </span>
               </div>
               <div className="text-[12px] leading-relaxed">
-                <span className="font-semibold text-cyan-900 dark:text-cyan-200">Diagnosis:</span>{" "}
+                <span className="font-semibold text-cyan-900 dark:text-cyan-200">
+                  Diagnosis:
+                </span>{" "}
                 {session.latestAiDecision.diagnosis}
               </div>
               <div className="text-[12px] leading-relaxed text-cyan-800 dark:text-cyan-100">
-                <span className="font-semibold text-cyan-900 dark:text-cyan-200">Action:</span>{" "}
+                <span className="font-semibold text-cyan-900 dark:text-cyan-200">
+                  Action:
+                </span>{" "}
                 {session.latestAiDecision.userMessage}
               </div>
             </div>
@@ -542,7 +551,7 @@ export function AiConfigurePage() {
           {/* Active Session Files Grouped by Dataset */}
           {session.files.length > 0 ? (
             <div className="mt-1 flex flex-col gap-3 rounded border bg-muted/10 p-3">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
                 Active Session Pipeline ({session.files.length} files across{" "}
                 {Object.keys(activeFilesByDataset).length} datasets)
               </span>
@@ -561,13 +570,15 @@ export function AiConfigurePage() {
                             {dCode}
                           </span>
                           <span
-                            className={`ml-1.5 px-1.5 py-0.2 rounded text-[10px] ${
+                            className={`py-0.2 ml-1.5 rounded px-1.5 text-[10px] ${
                               hasDataset
-                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
+                                ? "bg-emerald-500/10 font-medium text-emerald-600 dark:text-emerald-400"
                                 : "bg-muted text-muted-foreground"
                             }`}
                           >
-                            {hasDataset ? "Dataset Registered" : "Dataset Pending"}
+                            {hasDataset
+                              ? "Dataset Registered"
+                              : "Dataset Pending"}
                           </span>
                         </div>
                         <span className="text-[11px] text-muted-foreground">
@@ -582,7 +593,7 @@ export function AiConfigurePage() {
                           )
                           const hasRun = Boolean(
                             session.artifacts.runs[file.id]?.status ===
-                              "Succeeded"
+                            "Succeeded"
                           )
 
                           return (
@@ -591,26 +602,26 @@ export function AiConfigurePage() {
                               className="flex flex-col gap-1 rounded border bg-card p-2 text-xs shadow-xs"
                             >
                               <div className="flex items-center justify-between gap-1">
-                                <span className="font-semibold truncate text-foreground">
+                                <span className="truncate font-semibold text-foreground">
                                   {file.name}
                                 </span>
                                 {file.size > 0 ? (
-                                  <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+                                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                                     {formatBytes(file.size)}
                                   </span>
                                 ) : null}
                               </div>
                               <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
                                 <span>Parser:</span>
-                                <strong className="text-foreground truncate">
+                                <strong className="truncate text-foreground">
                                   {file.parserCode}
                                 </strong>
                               </div>
-                              <div className="mt-1 flex flex-wrap gap-1.5 pt-1 border-t border-muted/40 text-[10px]">
+                              <div className="mt-1 flex flex-wrap gap-1.5 border-t border-muted/40 pt-1 text-[10px]">
                                 <span
-                                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded ${
+                                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 ${
                                     hasParser
-                                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
+                                      ? "bg-emerald-500/10 font-medium text-emerald-600 dark:text-emerald-400"
                                       : "bg-muted text-muted-foreground"
                                   }`}
                                 >
@@ -618,9 +629,9 @@ export function AiConfigurePage() {
                                   Parser
                                 </span>
                                 <span
-                                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded ${
+                                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 ${
                                     hasRun
-                                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
+                                      ? "bg-emerald-500/10 font-medium text-emerald-600 dark:text-emerald-400"
                                       : "bg-muted text-muted-foreground"
                                   }`}
                                 >
@@ -647,12 +658,12 @@ export function AiConfigurePage() {
           <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
             <Clock className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <div>
-              <p className="font-medium text-sm">
+              <p className="text-sm font-medium">
                 Session was paused upon page reload
               </p>
-              <p className="text-muted-foreground mt-0.5">
-                Your uploaded files and dataset groups are fully preserved. Click
-                resume to continue Step {session.currentStep || 1}.
+              <p className="mt-0.5 text-muted-foreground">
+                Your uploaded files and dataset groups are fully preserved.
+                Click resume to continue Step {session.currentStep || 1}.
               </p>
             </div>
           </div>
@@ -669,23 +680,23 @@ export function AiConfigurePage() {
 
       {/* Completion View */}
       {isCompleted && session.completion ? (
-        <article className="flex flex-col gap-4 border bg-card p-5 rounded-lg shadow-sm">
+        <article className="flex flex-col gap-4 rounded-lg border bg-card p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-medium text-base">
+            <h2 className="text-base font-medium">
               Configuration ready: {session.completion.package.name}
             </h2>
-            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+            <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
               State preserved across sessions
             </span>
           </div>
 
           <p className="text-sm text-muted-foreground">
             Review and edit the saved configuration, or approve the profile and
-            immediately run reconciliation on all uploaded files.
+            run the validated revision on every uploaded file.
           </p>
 
           <div className="flex flex-col gap-2 rounded border bg-muted/20 p-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
               Processed Datasets & Parsers
             </span>
             <ul className="flex flex-col gap-2 text-sm">
@@ -714,6 +725,16 @@ export function AiConfigurePage() {
             </ul>
           </div>
 
+          {session.completion.configurationId && (
+            <ConfigurationReadiness id={session.completion.configurationId} />
+          )}
+          <p className="text-xs text-muted-foreground">
+            Rule generation:{" "}
+            {session.completion.source === "model"
+              ? "AI proposal, validated against parsed outputs"
+              : "Deterministic fallback, validated against parsed outputs"}
+            .
+          </p>
           <div className="flex flex-wrap gap-2 pt-2">
             <Button
               variant="outline"
@@ -725,19 +746,6 @@ export function AiConfigurePage() {
               }
             >
               Review configuration
-            </Button>
-            <Button
-              disabled={sampleRunPending}
-              onClick={() => void handleRunSamples()}
-            >
-              {sampleRunPending ? (
-                <>
-                  <Loader2 className="mr-1.5 size-4 animate-spin" />
-                  Running…
-                </>
-              ) : (
-                "Run uploaded samples"
-              )}
             </Button>
             <Button
               variant="ghost"
@@ -753,7 +761,7 @@ export function AiConfigurePage() {
       ) : !isOngoing ? (
         /* Empty / Idle Upload Form with Dataset Count Division & Multi-file support */
         <form
-          className="flex flex-col gap-5 border bg-card p-5 rounded-lg shadow-sm"
+          className="flex flex-col gap-5 rounded-lg border bg-card p-5 shadow-sm"
           onSubmit={(event) => {
             event.preventDefault()
             void handleStart()
@@ -762,9 +770,11 @@ export function AiConfigurePage() {
           {/* Dataset Count Selector */}
           <div className="flex flex-col gap-2 border-b pb-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className={labelClass}>Number of Datasets to Reconcile</span>
+              <span className={labelClass}>
+                Number of Datasets to Reconcile
+              </span>
               <span className="text-[11px] text-muted-foreground">
-                Minimum 2, maximum 5
+                Minimum 2, maximum 3
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
@@ -772,9 +782,9 @@ export function AiConfigurePage() {
                 <button
                   type="button"
                   onClick={() => handleCountModeChange("2")}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                     datasetCountMode === "2"
-                      ? "bg-background text-foreground shadow-sm font-semibold"
+                      ? "bg-background font-semibold text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -783,9 +793,9 @@ export function AiConfigurePage() {
                 <button
                   type="button"
                   onClick={() => handleCountModeChange("3")}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                     datasetCountMode === "3"
-                      ? "bg-background text-foreground shadow-sm font-semibold"
+                      ? "bg-background font-semibold text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -794,9 +804,9 @@ export function AiConfigurePage() {
                 <button
                   type="button"
                   onClick={() => handleCountModeChange("custom")}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                     datasetCountMode === "custom"
-                      ? "bg-background text-foreground shadow-sm font-semibold"
+                      ? "bg-background font-semibold text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
@@ -805,22 +815,22 @@ export function AiConfigurePage() {
               </div>
 
               {datasetCountMode === "custom" && (
-                <div className="flex items-center gap-1.5 bg-muted/20 px-2.5 py-1 rounded border">
-                  <span className="text-xs text-muted-foreground font-medium">
+                <div className="flex items-center gap-1.5 rounded border bg-muted/20 px-2.5 py-1">
+                  <span className="text-xs font-medium text-muted-foreground">
                     Count:
                   </span>
                   <input
                     type="number"
                     min={2}
-                    max={5}
+                    max={3}
                     value={customCount}
                     onChange={(e) =>
                       handleCustomCountChange(parseInt(e.target.value) || 2)
                     }
-                    className="h-7 w-14 rounded border bg-background px-1.5 text-xs font-bold text-center"
+                    className="h-7 w-14 rounded border bg-background px-1.5 text-center text-xs font-bold"
                   />
                   <span className="text-[11px] text-muted-foreground">
-                    (2 to 5)
+                    (2 to 3)
                   </span>
                 </div>
               )}
@@ -834,7 +844,8 @@ export function AiConfigurePage() {
                 Dataset Groups & File Uploads (1 Parser per File)
               </span>
               <span className="text-[11px] text-muted-foreground">
-                Upload one or multiple CSV, XLSX, TXT, or ZIP files per dataset group
+                Upload one or multiple CSV, XLSX, TXT, or ZIP files per dataset
+                group
               </span>
             </div>
 
@@ -851,11 +862,11 @@ export function AiConfigurePage() {
                       <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
                         {groupIdx + 1}
                       </span>
-                      <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+                      <span className="text-xs font-semibold tracking-wider text-foreground uppercase">
                         Dataset {groupIdx + 1}
                       </span>
                     </div>
-                    <span className="text-[11px] font-mono text-muted-foreground">
+                    <span className="font-mono text-[11px] text-muted-foreground">
                       {group.files.length}{" "}
                       {group.files.length === 1 ? "file" : "files"}
                     </span>
@@ -880,16 +891,20 @@ export function AiConfigurePage() {
                   {/* Upload Dropzone / Button for this Dataset Group */}
                   <div className="flex flex-col gap-2">
                     <label
-                      className="flex flex-col items-center justify-center rounded-md border border-dashed border-muted-foreground/30 bg-background/50 p-3 hover:bg-background/80 cursor-pointer transition-colors text-center"
+                      className="flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-muted-foreground/30 bg-background/50 p-3 text-center transition-colors hover:bg-background/80"
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => {
                         e.preventDefault()
-                        void handleAddFilesToGroup(group.id, e.dataTransfer.files)
+                        void handleAddFilesToGroup(
+                          group.id,
+                          e.dataTransfer.files
+                        )
                       }}
                     >
-                      <Upload className="size-4 text-primary mb-1" />
+                      <Upload className="mb-1 size-4 text-primary" />
                       <span className="text-xs font-medium text-foreground">
-                        Upload files for {group.code || `Dataset ${groupIdx + 1}`}
+                        Upload files for{" "}
+                        {group.code || `Dataset ${groupIdx + 1}`}
                       </span>
                       <span className="text-[10px] text-muted-foreground">
                         Supports .csv, .xlsx, .txt, .zip
@@ -908,20 +923,20 @@ export function AiConfigurePage() {
 
                     {/* Uploaded File List */}
                     {group.files.length > 0 ? (
-                      <ul className="flex flex-col gap-1.5 max-h-44 overflow-y-auto">
+                      <ul className="flex max-h-44 flex-col gap-1.5 overflow-y-auto">
                         {group.files.map((f) => (
                           <li
                             key={f.id}
                             className="flex items-center justify-between rounded border bg-background px-2.5 py-1.5 text-xs shadow-xs"
                           >
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <FileText className="size-3.5 text-muted-foreground shrink-0" />
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <FileText className="size-3.5 shrink-0 text-muted-foreground" />
                               <span className="truncate font-medium">
                                 {f.file.name}
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-[10px] font-mono text-muted-foreground">
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span className="font-mono text-[10px] text-muted-foreground">
                                 {formatBytes(f.file.size)}
                               </span>
                               <button
@@ -929,7 +944,7 @@ export function AiConfigurePage() {
                                 onClick={() =>
                                   handleRemoveFileFromGroup(group.id, f.id)
                                 }
-                                className="text-muted-foreground hover:text-destructive p-0.5"
+                                className="p-0.5 text-muted-foreground hover:text-destructive"
                                 title="Remove file"
                               >
                                 <Trash2 className="size-3" />
@@ -939,7 +954,7 @@ export function AiConfigurePage() {
                         ))}
                       </ul>
                     ) : (
-                      <p className="text-[11px] text-amber-600 dark:text-amber-400 italic">
+                      <p className="text-[11px] text-amber-600 italic dark:text-amber-400">
                         Upload at least one CSV, XLSX, TXT, or ZIP file.
                       </p>
                     )}
@@ -959,6 +974,7 @@ export function AiConfigurePage() {
             </div>
             <textarea
               className={textareaClass}
+              maxLength={1200}
               value={context}
               placeholder="Describe the relationship between datasets, matching criteria, tolerance, or primary keys."
               onChange={(event) => handleContextChange(event.target.value)}

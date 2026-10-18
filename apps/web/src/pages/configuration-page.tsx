@@ -19,10 +19,15 @@ export function ConfigurationPage() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Link
           to="/configuration/ai"
-          className="relative flex flex-col gap-3 border bg-card p-5 hover:bg-muted transition-colors rounded-lg shadow-sm"
+          className="relative flex flex-col gap-3 rounded-lg border bg-card p-5 shadow-sm transition-colors hover:border-primary/50 hover:bg-muted focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
-          <div className="flex items-center justify-between">
-            <Sparkles className="size-5 text-primary" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-5 text-primary" />
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                Recommended
+              </span>
+            </div>
             {session.status === "running" ? (
               <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary animate-pulse">
                 <Loader2 className="size-3 animate-spin" />
@@ -50,11 +55,14 @@ export function ConfigurationPage() {
                 : "Upload one file per dataset and let the assistant draft a profile."}
             </p>
           </div>
+          <p className="mt-auto pt-1 text-xs text-muted-foreground">
+            Best for first-time setup
+          </p>
         </Link>
 
         <Link
           to="/configuration/manual"
-          className="flex flex-col gap-3 border bg-card p-5 hover:bg-muted transition-colors rounded-lg shadow-sm"
+          className="flex flex-col gap-3 rounded-lg border bg-card p-5 shadow-sm transition-colors hover:border-primary/50 hover:bg-muted focus-visible:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <div className="flex items-center justify-between">
             <SlidersHorizontal className="size-5 text-primary" />
@@ -65,6 +73,9 @@ export function ConfigurationPage() {
               Edit parsers, datasets, and recon profiles yourself.
             </p>
           </div>
+          <p className="mt-auto pt-1 text-xs text-muted-foreground">
+            For advanced tuning
+          </p>
         </Link>
       </div>
     </section>

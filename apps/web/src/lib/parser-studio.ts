@@ -190,6 +190,8 @@ export type SourceColumn = {
 }
 
 export type StudioDocument = {
+  proposalSource?: string
+  proposalWarnings?: string[]
   description: string
   datasetId: string
   expectedFormat: SourceFormat
@@ -553,7 +555,7 @@ export function parseExcelSample(
     }
   }
 
-  let columns: SourceColumn[] = []
+  let columns: SourceColumn[]
   let sampleRows: string[][] = []
 
   if (headerMode === "none") {

@@ -1,11 +1,26 @@
 import { Button } from "@workspace/ui/components/button"
-import { useQuery } from "@tanstack/react-query"
+import { useQueries, useQuery } from "@tanstack/react-query"
 import { Download, Table2 } from "lucide-react"
 import { Link } from "react-router"
 import { ErrorNote } from "@/components/error-note"
 import { api } from "@/lib/api"
 import { downloadCsv } from "@/lib/csv"
 import type { RunSummary } from "@/lib/types"
+import {
+  getCurrentUser,
+  shortUserId,
+  userDisplayName,
+  type UserIdentity,
+} from "@/lib/user-identity"
+
+const statusColors: Record<string, string> = {
+  succeeded:
+    "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400",
+  failed:
+    "border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400",
+  running:
+    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400",
+}
 
 export function RunsPage() {
   const runs = useQuery({
@@ -13,6 +28,43 @@ export function RunsPage() {
     queryFn: () => api<RunSummary[]>("/api/app/run"),
   })
   const rows = runs.data ?? []
+  const currentUser = useQuery({
+    queryKey: ["current-user"],
+    queryFn: getCurrentUser,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  })
+  const currentUserId = currentUser.data?.id?.toLowerCase()
+  const otherCreatorIds = [...new Set(rows.flatMap((run) =>
+    run.creatorId && run.creatorId.toLowerCase() !== currentUserId
+      ? [run.creatorId.toLowerCase()]
+      : []
+  ))]
+  const creatorQueries = useQueries({
+    queries: otherCreatorIds.map((id) => ({
+      queryKey: ["run-creator", currentUserId, id],
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        api<UserIdentity>(`/api/identity/users/${id}`, { signal }),
+      enabled: !currentUser.isPending,
+      staleTime: 5 * 60 * 1000,
+      retry: false,
+    })),
+  })
+  const creators = new Map(
+    creatorQueries.flatMap((query, index) =>
+      query.data?.id?.toLowerCase() === otherCreatorIds[index]
+        ? [[otherCreatorIds[index], query.data] as const]
+        : []
+    )
+  )
+
+  function creatorName(id: string | null) {
+    const user = id && currentUserId && id.toLowerCase() === currentUserId
+      ? currentUser.data
+      : creators.get(id?.toLowerCase() ?? "")
+    return userDisplayName(user) ?? shortUserId(id)
+  }
+
   return (
     <section className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-4">
@@ -34,7 +86,9 @@ export function RunsPage() {
       ) : null}
       <div className="overflow-hidden border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <p className="text-sm font-medium">{rows.length} runs</p>
+          <p className="text-sm font-medium">
+            {rows.length} {rows.length === 1 ? "run" : "runs"}
+          </p>
           <Button
             variant="outline"
             size="sm"
@@ -81,7 +135,7 @@ export function RunsPage() {
                 <th className="px-4 py-2.5 text-right">Open records</th>
                 <th className="px-4 py-2.5">Created by</th>
                 <th className="px-4 py-2.5">
-                  <span className="sr-only">Data grid</span>
+                  <span className="sr-only">View details</span>
                 </th>
               </tr>
             </thead>
@@ -99,7 +153,7 @@ export function RunsPage() {
               {rows.map((run) => (
                 <tr
                   key={run.id}
-                  className="border-b last:border-0 hover:bg-muted/30"
+                  className="border-b transition-colors last:border-0 hover:bg-muted/50 focus-within:bg-muted/50"
                 >
                   <td className="px-4 py-3">
                     <Link
@@ -113,7 +167,13 @@ export function RunsPage() {
                       {new Date(run.creationTime).toLocaleString()}
                     </p>
                   </td>
-                  <td className="px-4 py-3">{run.status}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusColors[run.status.toLowerCase()] ?? "border-border bg-muted text-muted-foreground"}`}
+                    >
+                      {run.status}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {run.totalRecords
                       ? `${((run.matchedRecords / run.totalRecords) * 100).toFixed(1)}%`
@@ -122,19 +182,21 @@ export function RunsPage() {
                   <td className="px-4 py-3 text-right tabular-nums">
                     {run.unresolvedRecords.toLocaleString()}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs">
-                    {run.creatorId ?? "—"}
+                  <td className="px-4 py-3 text-sm" title={run.creatorId ?? undefined}>
+                    {creatorName(run.creatorId)}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Button
                       variant="ghost"
-                      size="icon-sm"
-                      aria-label={`View data grid for ${run.profileName}`}
+                      size="sm"
+                      aria-label={`View details for ${run.profileName}`}
+                      title="View details"
                       render={
                         <Link to={`/reconciliation/runs/${run.id}/grid`} />
                       }
                     >
                       <Table2 />
+                      <span>View details</span>
                     </Button>
                   </td>
                 </tr>

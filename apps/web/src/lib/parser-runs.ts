@@ -6,13 +6,29 @@ export async function uploadAndParse(
   file: File,
   signal?: AbortSignal
 ): Promise<ParserRun> {
+  const run = await queueParserRun(parserId, file, signal)
+  return waitForParserRun(run, signal)
+}
+
+export async function queueParserRun(
+  parserId: string,
+  file: File,
+  signal?: AbortSignal
+): Promise<ParserRun> {
   const body = new FormData()
   body.append("file", file)
-  let run = await api<ParserRun>(`/api/parsers/${parserId}/runs`, {
+  return api<ParserRun>(`/api/parsers/${parserId}/runs`, {
     method: "POST",
     body,
     signal,
   })
+}
+
+export async function waitForParserRun(
+  initial: ParserRun,
+  signal?: AbortSignal
+): Promise<ParserRun> {
+  let run = initial
   const deadline = Date.now() + 10 * 60_000
   while (run.status === "Queued") {
     if (Date.now() > deadline)
@@ -31,9 +47,12 @@ export async function uploadAndParse(
       if (signal?.aborted) abort()
       else signal?.addEventListener("abort", abort, { once: true })
     })
-    const runs = await api<ParserRun[]>(`/api/parsers/${parserId}/runs`, {
-      signal,
-    })
+    const runs = await api<ParserRun[]>(
+      `/api/parsers/${run.parserConfigurationId}/runs`,
+      {
+        signal,
+      }
+    )
     run = runs.find((item) => item.id === run.id) ?? run
   }
   if (run.status !== "Succeeded")

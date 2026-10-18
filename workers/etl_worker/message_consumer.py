@@ -162,11 +162,11 @@ def main() -> None:
             subscription_path = subscriber.subscription_path(project, subscription)
             try:
                 publisher.create_topic(name=topic_path)
-            except AlreadyExists:
+            except Exception:
                 pass
             try:
                 subscriber.create_subscription(name=subscription_path, topic=topic_path)
-            except AlreadyExists:
+            except Exception:
                 pass
 
             def callback(message: pubsub_v1.subscriber.message.Message) -> None:

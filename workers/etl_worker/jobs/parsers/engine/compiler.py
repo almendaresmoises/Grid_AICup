@@ -271,14 +271,7 @@ class PolarsPipelineCompiler:
             pattern = self._safe_regex(args)
             source_expr = pl.col(source).cast(pl.String)
             extracted = source_expr.str.extract(pattern, int(args.get("group", 1)))
-            invalid = source_expr.is_not_null() & extracted.is_null()
-            return self._record_error(
-                frame,
-                frame.with_columns(extracted.alias(target)),
-                invalid,
-                step,
-                result,
-            )
+            return self._checked_value(frame, step, result, source, target, extracted)
         if op == "split":
             return self._split(frame, args)
         if op == "concatColumns":
@@ -391,29 +384,12 @@ class PolarsPipelineCompiler:
             casted = self._parse_date_expr(source_expr)
         elif data_type_name == "decimal(18,2)":
             str_val = source_expr.cast(pl.String).str.strip_chars().str.strip_chars_start("'").str.replace_all(",", "", literal=True).str.replace_all("$", "", literal=True)
-            is_centavos = str_val.str.contains(r"^00\d{4,}$")
-            num_val = str_val.cast(pl.Decimal(18, 2), strict=False)
-            casted = (
-                pl.when(is_centavos)
-                .then((str_val.cast(pl.Float64, strict=False) / 100.0).cast(pl.Decimal(18, 2), strict=False))
-                .otherwise(num_val)
-            )
+            casted = str_val.cast(pl.Decimal(18, 2), strict=False)
         elif data_type_name == "string":
-            str_val = source_expr.cast(pl.String).str.strip_chars().str.strip_chars_start("'")
-            # Automatically normalize zero-padded 19-20 digit PANs or unmasked 16-digit PANs with 'X'
-            is_padded_pan = str_val.str.contains(r"^000\d{16,17}$")
-            pan_16 = pl.when(is_padded_pan).then(str_val.str.slice(-16)).otherwise(str_val)
-            is_unmasked_or_x_pan = is_padded_pan | pan_16.str.contains(r"^\d{6}[\dX]{6}\d{4}$")
-            casted = (
-                pl.when(is_unmasked_or_x_pan)
-                .then(pl.concat_str([pan_16.str.slice(0, 6), pl.lit("******"), pan_16.str.slice(-4)]))
-                .otherwise(str_val)
-            )
+            casted = source_expr.cast(pl.String).str.strip_chars().str.strip_chars_start("'")
         else:
             casted = source_expr.cast(TYPE_MAP[data_type_name], strict=False)
-        invalid = pl.lit(False)
-        with_value = frame.with_columns(casted.alias(target))
-        return self._record_error(frame, with_value, invalid, step, result)
+        return self._checked_value(frame, step, result, source, target, casted)
 
     def _parse_datetime(self, frame: pl.LazyFrame, step: PipelineStep, result: CompileResult) -> pl.LazyFrame:
         source, target = self._source_target(step.args)
@@ -423,7 +399,17 @@ class PolarsPipelineCompiler:
         else:
             source_expr = pl.col(source).cast(pl.String).str.strip_chars()
             parsed = source_expr.str.strptime(pl.Datetime, format=step.args.get("format"), strict=False, exact=bool(step.args.get("exact", True)))
-        return frame.with_columns(parsed.alias(target))
+        return self._checked_value(frame, step, result, source, target, parsed)
+
+    def _checked_value(self, frame: pl.LazyFrame, step: PipelineStep, result: CompileResult,
+                       source: str, target: str, value: pl.Expr) -> pl.LazyFrame:
+        marker = "__isa_conversion_invalid"
+        while marker in frame.collect_schema().names():
+            marker += "_"
+        present = pl.col(source).is_not_null() & pl.col(source).cast(pl.String).str.strip_chars().ne("")
+        original = frame.with_columns((present & value.is_null()).fill_null(False).alias(marker))
+        transformed = original.with_columns(value.alias(target))
+        return self._record_error(original, transformed, pl.col(marker), step, result).drop(marker)
 
     def _record_error(
         self,
@@ -558,10 +544,16 @@ class PolarsPipelineCompiler:
             pl.lit("").str.pad_start(middle_length, mask_character),
             suffix,
         ])
+        # Freeze the predicate before overwriting the source. Re-evaluating it on
+        # the null target would silently erase the failure and quarantine flag.
+        invalid_column = "__isa_mask_invalid"
+        while invalid_column in frame.collect_schema().names():
+            invalid_column += "_"
+        frame = frame.with_columns(invalid.fill_null(False).alias(invalid_column))
         transformed = frame.with_columns(
             pl.when(invalid).then(pl.lit(None, dtype=pl.String)).otherwise(masked).alias(target)
         )
-        return self._record_error(frame, transformed, invalid, step, result)
+        return self._record_error(frame, transformed, pl.col(invalid_column), step, result).drop(invalid_column)
 
     def _split(self, frame: pl.LazyFrame, args: Mapping[str, Any]) -> pl.LazyFrame:
         source = self._string(args, "source")

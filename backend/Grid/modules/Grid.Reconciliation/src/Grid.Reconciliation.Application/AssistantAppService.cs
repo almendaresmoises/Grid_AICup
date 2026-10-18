@@ -13,116 +13,27 @@ namespace Grid.Reconciliation;
 public class AssistantAppService : ApplicationService, IAssistantAppService
 {
     private const string RuleFormat = """
-        You MUST output one JSON object with these fields:
-        {
-          "name": "Omnichannel POS and Gateway Cascade Reconciliation",
-          "datasets": ["POS", "GATEWAY"],
-          "rules": [
-            {
-              "id": "EXACT_01_FULL",
-              "type": "exact",
-              "datasets": ["POS", "GATEWAY"],
-              "keys": [
-                {"type": "text", "fields": {"POS": "order_id", "GATEWAY": "ext_ref"}, "strip_prefixes": {"GATEWAY": ["TXN-", "REF/"]}},
-                {"type": "amount", "fields": {"POS": "gross_amount", "GATEWAY": "charge_amount"}},
-                {"type": "date", "fields": {"POS": "sale_date", "GATEWAY": "settlement_date"}},
-                {"type": "text", "fields": {"POS": "card_last_4", "GATEWAY": "card_pan_last4"}},
-                {"type": "text", "fields": {"POS": "terminal_id", "GATEWAY": "pos_terminal"}}
-              ]
-            },
-            {
-              "id": "PARTIAL_02_REF_FUZZY",
-              "type": "partial",
-              "datasets": ["POS", "GATEWAY"],
-              "min_score": 0.80,
-              "remarks": "Possible match on card, amount, date & terminal; reference/approval code has minor typo or OCR difference",
-              "keys": [
-                {"type": "amount", "fields": {"POS": "gross_amount", "GATEWAY": "charge_amount"}, "match_mode": "exact"},
-                {"type": "date", "fields": {"POS": "sale_date", "GATEWAY": "settlement_date"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "card_last_4", "GATEWAY": "card_pan_last4"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "terminal_id", "GATEWAY": "pos_terminal"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "order_id", "GATEWAY": "ext_ref"}, "strip_prefixes": {"GATEWAY": ["TXN-", "REF/"]}, "match_mode": "fuzzy", "algorithm": "damerau_levenshtein", "min_score": 0.80}
-              ]
-            },
-            {
-              "id": "PARTIAL_03_REF_DIVERGENT",
-              "type": "partial",
-              "datasets": ["POS", "GATEWAY"],
-              "min_score": 0.80,
-              "remarks": "Possible match on card, amount, date & terminal; approval/reference code divergent",
-              "keys": [
-                {"type": "amount", "fields": {"POS": "gross_amount", "GATEWAY": "charge_amount"}, "match_mode": "exact"},
-                {"type": "date", "fields": {"POS": "sale_date", "GATEWAY": "settlement_date"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "card_last_4", "GATEWAY": "card_pan_last4"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "terminal_id", "GATEWAY": "pos_terminal"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "order_id", "GATEWAY": "ext_ref"}, "strip_prefixes": {"GATEWAY": ["TXN-", "REF/"]}, "match_mode": "divergent", "min_score": 0.80}
-              ]
-            },
-            {
-              "id": "PARTIAL_04_CARD_DIVERGENT",
-              "type": "partial",
-              "datasets": ["POS", "GATEWAY"],
-              "min_score": 0.80,
-              "remarks": "Possible match on ref, amount, date & terminal; card number divergent",
-              "keys": [
-                {"type": "text", "fields": {"POS": "order_id", "GATEWAY": "ext_ref"}, "strip_prefixes": {"GATEWAY": ["TXN-", "REF/"]}, "match_mode": "exact"},
-                {"type": "amount", "fields": {"POS": "gross_amount", "GATEWAY": "charge_amount"}, "match_mode": "exact"},
-                {"type": "date", "fields": {"POS": "sale_date", "GATEWAY": "settlement_date"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "terminal_id", "GATEWAY": "pos_terminal"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "card_last_4", "GATEWAY": "card_pan_last4"}, "match_mode": "divergent", "min_score": 0.80}
-              ]
-            },
-            {
-              "id": "PARTIAL_05_DATE_LAG",
-              "type": "partial",
-              "datasets": ["POS", "GATEWAY"],
-              "min_score": 0.80,
-              "remarks": "Possible match with 1-3 day date settlement difference",
-              "keys": [
-                {"type": "text", "fields": {"POS": "order_id", "GATEWAY": "ext_ref"}, "strip_prefixes": {"GATEWAY": ["TXN-", "REF/"]}, "match_mode": "exact"},
-                {"type": "amount", "fields": {"POS": "gross_amount", "GATEWAY": "charge_amount"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "card_last_4", "GATEWAY": "card_pan_last4"}, "match_mode": "exact"},
-                {"type": "date", "fields": {"POS": "sale_date", "GATEWAY": "settlement_date"}, "match_mode": "fuzzy", "algorithm": "date_proximity", "min_score": 0.80}
-              ]
-            },
-            {
-              "id": "PARTIAL_06_AMOUNT_VARIANCE",
-              "type": "partial",
-              "datasets": ["POS", "GATEWAY"],
-              "min_score": 0.80,
-              "remarks": "Possible match on ref & date; amount variance within tolerance",
-              "keys": [
-                {"type": "text", "fields": {"POS": "order_id", "GATEWAY": "ext_ref"}, "strip_prefixes": {"GATEWAY": ["TXN-", "REF/"]}, "match_mode": "exact"},
-                {"type": "date", "fields": {"POS": "sale_date", "GATEWAY": "settlement_date"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "card_last_4", "GATEWAY": "card_pan_last4"}, "match_mode": "exact"},
-                {"type": "amount", "fields": {"POS": "gross_amount", "GATEWAY": "charge_amount"}, "match_mode": "fuzzy", "algorithm": "numeric_best_practice", "tolerance": "1.00", "min_score": 0.80}
-              ]
-            },
-            {
-              "id": "PARTIAL_07_COMBINED_VARIANCE",
-              "type": "partial",
-              "datasets": ["POS", "GATEWAY"],
-              "min_score": 0.80,
-              "remarks": "Possible match on ref & amount; card divergent and date settlement difference",
-              "keys": [
-                {"type": "text", "fields": {"POS": "order_id", "GATEWAY": "ext_ref"}, "strip_prefixes": {"GATEWAY": ["TXN-", "REF/"]}, "match_mode": "exact"},
-                {"type": "amount", "fields": {"POS": "gross_amount", "GATEWAY": "charge_amount"}, "match_mode": "exact"},
-                {"type": "text", "fields": {"POS": "card_last_4", "GATEWAY": "card_pan_last4"}, "match_mode": "divergent", "min_score": 0.80},
-                {"type": "date", "fields": {"POS": "sale_date", "GATEWAY": "settlement_date"}, "match_mode": "fuzzy", "algorithm": "date_proximity", "min_score": 0.80}
-              ]
-            }
-          ]
-        }
-        Supported rule types:
-        1. "exact": Uniquely matches ONE row from EVERY participating dataset on ALL normalized keys.
-        2. "aggregate": Matches 1 target row to 1+ source rows grouped by keys where source sum equals target amount within tolerance. Also supply "target", "source", "target_amount", "source_amount", and string "tolerance".
-        3. "partial": Multi-pass rule where a subset of keys match exactly (anchors) and remaining keys allow fuzzy matching, tolerances, or expected mismatch/divergence.
-           - Anchor exact keys: Use "match_mode":"exact" (or omit match_mode). At least one key (preferably 2 or 3) MUST be exact to partition candidates deterministically.
-           - Text keys: Use "match_mode":"fuzzy", "algorithm":"damerau_levenshtein", and "min_score" (always 0.80 to match single-character typos on 6-character auth codes).
-           - Amount keys: Use "match_mode":"fuzzy", "algorithm":"numeric_best_practice", optional "tolerance" (e.g. "1.00"), and "min_score" (e.g. 0.80).
-           - Date keys: Use "match_mode":"fuzzy", "algorithm":"date_proximity", and "min_score" (e.g. 0.80 for 1-2 day settlement lag).
-           - Divergent keys (expected mismatch): Use "match_mode":"divergent" or "expected_mismatch":true so it flags a recon remark like "Possible match but {key} is not matched".
-        Use only supplied dataset codes, existing column names, and rule types. Each key must contain "type" (text, amount, date) and "fields" mapping EVERY rule dataset code to its corresponding column name. "strip_prefixes" is optional.
+        Return a JSON object with name, datasets and rules. Example shape only:
+        {"name":"Reconciliation","datasets":["LEFT","RIGHT"],"rules":[
+          {"id":"FULL","type":"exact","datasets":["LEFT","RIGHT"],"keys":[
+            {"type":"text","fields":{"LEFT":"reference","RIGHT":"reference"}},
+            {"type":"amount","fields":{"LEFT":"amount","RIGHT":"amount"}},
+            {"type":"date","fields":{"LEFT":"date","RIGHT":"date"}}]}]}
+        Use ONLY supplied dataset codes and existing, populated canonical columns.
+        Key type is text, amount or date. Fields map every participating dataset.
+        Exact rules require unique rows on all normalized keys.
+        Optional partial rules retain all full-match keys. Exact anchors have
+        match_mode="exact". A differing key uses match_mode="fuzzy" with:
+        - text: algorithm="damerau_levenshtein", min_score in [0,1].
+        - amount: algorithm="numeric_best_practice", an absolute tolerance and min_score.
+        - date: algorithm="date_proximity", tolerance in days and min_score.
+        Each partial rule needs at least two exact anchors and an observed difference.
+        strip_prefixes may map dataset codes to explicit prefixes supported by evidence.
+        Aggregate rules use type="aggregate", target, source, target_amount,
+        source_amount and an absolute tolerance; use only for observed grouped sums.
+        Preserve company_code and branch_code as exact scope in EVERY rule when present.
+        Do not add unbounded divergent/expected_mismatch comparisons automatically.
+        There is no minimum number of rules. Do not invent passes or unsupported fields.
         """;
 
     private readonly IConfiguration _configuration;
@@ -149,74 +60,64 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
         {
             rows = input.CsvSamples is { Count: > 0 }
                 ? codes.ToDictionary(code => code, code => ReconciliationEngine.ReadCsv(input.CsvSamples.TryGetValue(code, out var csv) ? csv : ""), StringComparer.Ordinal)
-                : await _data.LoadAsync(codes, input.ParserRunIds);
+                : await _data.LoadAsync(codes, input.ParserRunIds, input.MultiParserRunIds);
         }
         catch (ReconciliationException ex)
         {
             throw new UserFriendlyException(ex.Message);
         }
+        return await DraftFromRowsAsync(codes, rows, input.Context);
+    }
+
+    internal async Task<ProposalDto> DraftFromRowsAsync(List<string> codes,
+        Dictionary<string, List<Dictionary<string, string>>> rows, string? context)
+    {
         var prompt = """
-            You are an expert financial reconciliation engineer. Design an in-depth, deterministic multi-pass reconciliation profile for the provided datasets.
-
-            CRITICAL DESIGN REQUIREMENTS:
-            1. BROAD KEY DISCOVERY (DO NOT LIMIT TO 2 OR 3 KEYS):
-               Inspect all CSV column headers and sample data carefully. Identify ALL corresponding semantic fields across the datasets (aim for 4 to 8 keys when candidate columns exist). Look for:
-               - Transaction Reference / Approval Code / ID / Order / Receipt / Invoice
-               - Financial Amount / Gross / Paid / Deposit / Net
-               - Date / Time / Timestamp / Settlement Date
-               - Payment Card / Masked PAN / Card Last 4 / Account Number
-               - Terminal ID / Store ID / Branch Code / Channel / Register
-               - Customer / Payer Name / Customer ID
-               - Authorization Code / Approval Code / RRN / Trace Number
-               Map all discovered semantic columns into the keys of your rules!
-
-            2. CRITICAL MIN_SCORE FOR 6-CHARACTER CODES (e.g. APPROVAL/AUTH CODES):
-               In retail and banking, authorization/approval codes are standard 6 characters long (e.g. '036551', '546357').
-               A single-character typo, transposition, or OCR misread (such as 'I' vs '1', 'O' vs '0', 'B' vs '8', 'S' vs '5') has an edit similarity of exactly 1 - (1/6) = 0.8333.
-               YOU MUST USE min_score: 0.80 (or 0.75) for fuzzy reference/code matching!
-               NEVER set min_score to 0.85 or higher for reference matching, as that will falsely reject standard 6-character codes with a single typo!
-
-            3. DUAL-ANCHOR PERSPECTIVES (BOTH REF-ANCHORED AND CARD-ANCHORED PASSES):
-               Discrepancies in transactional data happen in two complementary directions:
-               - Perspective A (Card Divergent, Ref Anchor): The transaction reference matches, but the card number diverges (mobile wallet token, virtual card, masked PAN). Anchor on Ref + Amount + Date + Branch; mark Card Number as 'divergent'.
-               - Perspective B (Reference Divergent, Card Anchor): The 16-digit Card Number, Amount, Date, and Branch match, but the approval/reference code diverges (e.g. POS terminal sequence/invoice number vs bank host approval code, or OCR typo like '03655I' vs '036551', or 'APPRVD' vs 'APPROV'). Anchor on Card Number + Amount + Date + Branch; mark Reference Code as 'fuzzy' (min_score: 0.80) or 'divergent'!
-               You MUST include BOTH perspectives in your cascade!
-
-            4. IN-DEPTH MULTI-PASS WATERFALL CASCADE (GENERATE 4 TO 7 SEQUENTIAL PASSES):
-               Reconciliation rules execute sequentially in a waterfall cascade. Once records match in an earlier pass, they are permanently resolved and excluded from subsequent passes.
-               Do NOT stop after 1 or 2 shallow passes. You MUST construct a comprehensive multi-pass cascade:
-               - Pass 1 (Perfect Full Exact Match): All candidate keys exact (e.g. Ref + Amount + Date + Card + Branch/Terminal).
-               - Pass 2 (Reference Typo / OCR Swap with Card Anchor): Anchor on Card + Amount + Date + Branch; Reference fuzzy (algorithm: "damerau_levenshtein", min_score: 0.80). Remarks: "Possible match on card, amount, date & branch; approval/reference code has minor typo or OCR difference".
-               - Pass 3 (Reference Divergent with Card Anchor): Anchor on Card + Amount + Date + Branch; Reference divergent ("match_mode":"divergent", min_score: 0.80). Remarks: "Possible match on card, amount, date & branch; approval/reference code divergent".
-               - Pass 4 (Card Divergent with Reference Anchor): Anchor on Ref + Amount + Date + Branch; Card divergent ("match_mode":"divergent", min_score: 0.80). Remarks: "Possible match on reference, amount, date & branch; card number divergent".
-               - Pass 5 (Settlement Date Lag): Anchor on Ref + Amount + Card + Branch; Date proximity ("match_mode":"fuzzy", "algorithm":"date_proximity", min_score: 0.80). Remarks: "Possible match with 1-3 day date settlement difference".
-               - Pass 6 (Amount / Fee Variance): Anchor on Ref + Date + Card + Branch; Amount tolerance ("match_mode":"fuzzy", "algorithm":"numeric_best_practice", tolerance: "1.00", min_score: 0.80). Remarks: "Possible match on ref, date & card; amount variance within tolerance".
-               - Pass 7 (Compound Variance with Strong Core Anchors): When core anchors (Ref + Amount or Card + Amount) match, allow compound divergence (e.g. Card divergent AND Date proximity lag) with min_score: 0.80. Remarks: "Possible match on core attributes; secondary attributes have minor divergence".
-
-            5. DETERMINISTIC ANCHORS:
-               Every partial rule MUST specify at least 1 or 2 anchor keys with "match_mode":"exact" so candidates are indexed and partitioned deterministically.
-
-            6. STRICT ADHERENCE:
-               Use only supplied dataset codes and existing column names. Output ONLY the JSON object. No markdown text outside the JSON.
+            Propose a deterministic reconciliation profile from the ACTUAL canonical parser outputs below.
+            Use the fewest rules supported by evidence. Do not invent a required number of passes.
+            Start with exact matching on comparable transaction identity, amount and business date.
+            Preserve company_code and branch_code as exact scope keys in EVERY pass when present.
+            Exclude entirely empty columns. Missing scope is an exception, never a relaxed match.
+            A partial pass needs at least two exact anchors and an observed difference on another key.
+            Use fuzzy references only for observed typographical differences, threshold 0.80.
+            Do not assume invoice numbers and authorization codes share an identity namespace.
+            Do not allow arbitrary card/reference divergence or invent fee tolerances.
+            Date proximity must declare tolerance in days (maximum 2 unless business context says otherwise).
+            Amount tolerance is an absolute upper bound; it is not an approximate relative score.
+            Keep field coverage consistent between passes. Return only the profile JSON object.
             """
-            + "\n" + RuleFormat
-            + "\nBusiness context: " + TrimContext(input.Context)
-            + "\nCSV profiles:\n" + JsonSerializer.Serialize(Sample(rows, 3));
+            + "\nSupported JSON schema/examples (examples are not mandatory rules):\n" + RuleFormat
+            + "\nBusiness context: " + TrimContext(context)
+            + "\nCanonical data evidence: " + JsonSerializer.Serialize(Sample(rows, 24));
         try
         {
             var drafted = await CallGeminiAsync(prompt);
             var profile = ProfileJson.Parse(drafted.GetRawText());
             ReconciliationEngine.ValidateProfile(profile, rows);
-            profile.Version = 1;
-            return new ProposalDto { DefinitionJson = ProfileJson.Write(profile) };
+            return AssessDraft(profile, rows, "model");
         }
         catch
         {
             // Fallback to high-speed deterministic heuristic profile generator on timeout, error, or quota
-            var heuristic = GenerateHeuristicProfile(codes, rows, input.Context);
-            heuristic.Version = 1;
-            return new ProposalDto { DefinitionJson = ProfileJson.Write(heuristic) };
+            var heuristic = GenerateHeuristicProfile(codes, rows, context);
+            var proposal = AssessDraft(heuristic, rows, "heuristic");
+            proposal.Warnings.Add("Model generation was unavailable or failed validation; an evidence-checked deterministic draft was used.");
+            return proposal;
         }
+    }
+
+    private static ProposalDto AssessDraft(ProfileDefinition profile,
+        Dictionary<string, List<Dictionary<string, string>>> rows, string source)
+    {
+        profile.Name = string.IsNullOrWhiteSpace(profile.Name) ? string.Join(" / ", rows.Keys) : profile.Name.Trim();
+        if (profile.Name.Length > 200) profile.Name = profile.Name[..200];
+        var report = AiConfigurationValidator.Assess(profile, rows);
+        if (!report.Passed) throw new ReconciliationException(string.Join(" ", report.Errors));
+        // A proposed pass is published only if it contributes on these exact files.
+        var useful = report.Passes.Where(pass => pass.Groups > 0).Select(pass => pass.Rule).ToHashSet();
+        profile.Rules = profile.Rules.Where(rule => rule.Type == "exact" || useful.Contains(rule.Id)).ToList();
+        profile.Version = 1;
+        return new ProposalDto { DefinitionJson = ProfileJson.Write(profile), Source = source, Warnings = report.Warnings };
     }
 
     public async Task<ParsersProposalDto> ProposeParsersAsync(ProposeParsersDto input)
@@ -244,6 +145,10 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
                - If the file ends with footer summary rows, counts, batches, totals, or end-of-file lines (e.g. "TOTAL COUNT", "TOTAL AMOUNT", "*** END OF REPORT ***", "BATCH TOTAL", "GRAND TOTAL"):
                  Set removeTotalRows=true and totalRowKeywords="TOTAL,COUNT,SUM,***,BATCH". Otherwise removeTotalRows=false and totalRowKeywords="".
             4. TRANSFORMATION STEPS (clean dirty columns to canonical form):
+               - Preserve company, branch and reference identifiers and their leading zeros.
+               - Never mask company_code: the substring 'pan' in 'company' does not mean a card.
+               - Mask only card/PAN fields with 15-19 digit values or already masked PAN values.
+               - Do not invent transforms to maximize match rates; use source evidence.
                Generate an ordered list of steps using ONLY these step kinds:
                - "parseDate": When a date column is in non-ISO format (e.g. DD/MM/YYYY, MM/DD/YYYY, YYYYMMDD, or DDMYYYY).
                  params: {"format": "%d/%m/%Y" or "%m/%d/%Y" or "%Y%m%d" or "%m%d%Y" or "%d%m%Y"}
@@ -311,6 +216,16 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
             var result = ParseParserProposalJson(drafted);
             if (result.Parsers.Count > 0)
             {
+                foreach (var parser in result.Parsers)
+                {
+                    foreach (var step in parser.Steps.Where(step => step.Kind == "maskCard"))
+                    {
+                        var file = input.Files.SingleOrDefault(file => file.Code == parser.Code);
+                        if (file == null || !SupportsCardMask(parser, file.RawSnippet, step.Source))
+                            throw new ReconciliationException($"Masking is not supported for non-card column {step.Source}.");
+                    }
+                }
+                result.Source = "model";
                 return result;
             }
         }
@@ -337,7 +252,7 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
             Synthesize an improved, in-depth multi-pass waterfall profile covering combinations of potential matching key misses, secondary key divergences, settlement date lags, fee variances, and OCR typos on 6-character codes (using min_score: 0.80).
             Ensure both Card-anchored (Ref divergent/fuzzy) and Ref-anchored (Card divergent) perspectives are included.
             Output a JSON object with {"diagnosis":string, "hypotheses":[string], "proposed_profile": profile object, "change_summary":[string], "risks":[string]}.
-            Ensure proposed_profile has an in-depth multi-pass waterfall cascade (4 to 7 passes) with strong anchor keys in partial rules and meaningful remarks.
+            Ensure proposed_profile uses evidence-based rules with strong anchor keys in partial rules and meaningful remarks. Do not invent arbitrary passes.
             """
             + "\n" + RuleFormat
             + "\nContext: " + TrimContext(input.Context)
@@ -685,22 +600,19 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
 
     private static object Sample(Dictionary<string, List<Dictionary<string, string>>> rows, int limit)
     {
-        return rows.ToDictionary(
-            pair => pair.Key,
-            pair =>
+        return rows.ToDictionary(pair => pair.Key, pair => new
+        {
+            row_count = pair.Value.Count,
+            columns = pair.Value[0].Keys,
+            profiles = pair.Value[0].Keys.Select(column => new
             {
-                var sampleRows = pair.Value.Take(limit)
-                    .Select(r => r.Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
-                                  .ToDictionary(kv => kv.Key, kv => kv.Value.Length > 35 ? kv.Value[..35] : kv.Value))
-                    .ToList();
-                var activeColumns = sampleRows.SelectMany(r => r.Keys).Distinct().ToList();
-                return new
-                {
-                    columns = activeColumns.Count > 0 ? activeColumns : pair.Value.FirstOrDefault()?.Keys.Take(12).ToList() ?? [],
-                    row_count = pair.Value.Count,
-                    sample_rows = sampleRows,
-                };
-            });
+                column,
+                missing = pair.Value.Count(row => string.IsNullOrWhiteSpace(row.GetValueOrDefault(column))),
+                distinct = pair.Value.Select(row => row.GetValueOrDefault(column)).Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count(),
+            }),
+            sample_rows = Enumerable.Range(0, Math.Min(limit, pair.Value.Count))
+                .Select(i => pair.Value[(int)((long)i * pair.Value.Count / Math.Min(limit, pair.Value.Count))]),
+        });
     }
 
     private static ProfileDefinition GenerateHeuristicProfile(
@@ -708,142 +620,44 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
         Dictionary<string, List<Dictionary<string, string>>> rows,
         string? context)
     {
-        var schemas = codes.ToDictionary(
-            c => c,
-            c => rows.TryGetValue(c, out var rList) && rList.Count > 0
-                ? rList[0].Keys.ToList()
-                : [],
-            StringComparer.Ordinal);
-
-        string? FindColumn(string code, string pattern)
+        var profile = new ProfileDefinition { Name = $"{string.Join(" & ", codes)} Reconciliation", Datasets = codes };
+        var keys = new List<KeyDefinition>();
+        void Add(string type, params string[] aliases)
         {
-            if (!schemas.TryGetValue(code, out var cols)) return null;
-            return cols.FirstOrDefault(c => System.Text.RegularExpressions.Regex.IsMatch(c, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            var fields = new Dictionary<string, string>();
+            foreach (var code in codes)
+            {
+                var name = aliases.FirstOrDefault(alias => rows[code][0].ContainsKey(alias) &&
+                    rows[code].Any(row => !string.IsNullOrWhiteSpace(row.GetValueOrDefault(alias))));
+                if (name == null) return;
+                fields[code] = name;
+            }
+            keys.Add(new KeyDefinition { Type = type, Fields = fields });
         }
-
-        var refCols = new Dictionary<string, string>();
-        var amtCols = new Dictionary<string, string>();
-        var dateCols = new Dictionary<string, string>();
-        var cardCols = new Dictionary<string, string>();
-        var termCols = new Dictionary<string, string>();
-
-        foreach (var code in codes)
+        Add("text", "company_code");
+        Add("text", "branch_code");
+        Add("text", "reference_code", "app_code", "approval_code", "auth_code", "order_id", "ext_ref", "receipt_id", "id");
+        Add("amount", "gross_amt", "gross_amount", "charge_amount", "amount");
+        Add("date", "trx_date", "sale_date", "transaction_date", "settlement_date");
+        Add("text", "card_number", "card_pan", "card_last_4");
+        if (keys.Count == 0)
+            throw new ReconciliationException("No comparable populated keys were found. Review the dataset mappings.");
+        profile.Rules.Add(new RuleDefinition { Id = "EXACT_01_FULL", Type = "exact", Datasets = codes, Keys = keys });
+        foreach (var relaxed in keys.Where(key => key.Fields.Values.All(name => name is not ("company_code" or "branch_code"))))
         {
-            refCols[code] = FindColumn(code, "(app_code|approval|auth|rrn|invoice|order_id)")
-                ?? FindColumn(code, "(id|ref|order|code|trans|receipt|seq|ticket)")
-                ?? schemas[code].FirstOrDefault() ?? "column_1";
-
-            amtCols[code] = FindColumn(code, "(gross_amt|gross|amount|amt|paid|total|charge|net|fee|price)")
-                ?? schemas[code].ElementAtOrDefault(1) ?? refCols[code];
-
-            dateCols[code] = FindColumn(code, "(trx_date|trans_date|transaction_date|sale_date)")
-                ?? FindColumn(code, "(date|time|timestamp|settle|sale|post)")
-                ?? schemas[code].ElementAtOrDefault(2) ?? refCols[code];
-
-            var cardCol = FindColumn(code, "(card|pan|account|acct)");
-            if (cardCol != null) cardCols[code] = cardCol;
+            if (keys.Count < 3) continue;
+            var isReference = relaxed.Type == "text" && !relaxed.Fields.Values.Any(name => name.Contains("card"));
+            if (!isReference) continue;
+            var copy = ProfileJson.Parse(ProfileJson.Write(new ProfileDefinition { Rules = [profile.Rules[0]] })).Rules[0];
+            copy.Id = "PARTIAL_REF_FUZZY";
+            copy.Type = "partial";
+            copy.MinScore = 0.80m;
+            for (var i = 0; i < keys.Count; i++) copy.Keys[i].MatchMode = ReferenceEquals(keys[i], relaxed) ? "fuzzy" : "exact";
+            copy.Keys[keys.IndexOf(relaxed)].MinScore = 0.80m;
+            copy.Keys[keys.IndexOf(relaxed)].Algorithm = "damerau_levenshtein";
+            profile.Rules.Add(copy);
+            break;
         }
-
-        var profile = new ProfileDefinition
-        {
-            Name = $"{string.Join(" & ", codes)} Waterfall Cascade Reconciliation",
-            Datasets = codes,
-            Rules = []
-        };
-
-        // Pass 1: Exact Match
-        var pass1Keys = new List<KeyDefinition>
-        {
-            new() { Type = "text", Fields = refCols },
-            new() { Type = "amount", Fields = amtCols },
-            new() { Type = "date", Fields = dateCols }
-        };
-        if (cardCols.Count == codes.Count) pass1Keys.Add(new() { Type = "text", Fields = cardCols });
-
-        profile.Rules.Add(new RuleDefinition
-        {
-            Id = "EXACT_01_FULL",
-            Type = "exact",
-            Datasets = codes,
-            Keys = pass1Keys
-        });
-
-        // Pass 2: Fuzzy Reference with Amount+Date Anchor (and Card if available)
-        var pass2Keys = new List<KeyDefinition>
-        {
-            new() { Type = "amount", Fields = amtCols, MatchMode = "exact" },
-            new() { Type = "date", Fields = dateCols, MatchMode = "exact" },
-            new() { Type = "text", Fields = refCols, MatchMode = "fuzzy", Algorithm = "damerau_levenshtein", MinScore = 0.80m }
-        };
-        if (cardCols.Count == codes.Count) pass2Keys.Insert(0, new() { Type = "text", Fields = cardCols, MatchMode = "exact" });
-
-        profile.Rules.Add(new RuleDefinition
-        {
-            Id = "PARTIAL_02_REF_FUZZY",
-            Type = "partial",
-            Datasets = codes,
-            MinScore = 0.80m,
-            Remarks = "Possible match on amount & date; reference code has minor typo or OCR difference",
-            Keys = pass2Keys
-        });
-
-        // Pass 3: Divergent Reference with Core Anchors
-        var pass3Keys = new List<KeyDefinition>
-        {
-            new() { Type = "amount", Fields = amtCols, MatchMode = "exact" },
-            new() { Type = "date", Fields = dateCols, MatchMode = "exact" },
-            new() { Type = "text", Fields = refCols, MatchMode = "divergent", MinScore = 0.80m }
-        };
-        if (cardCols.Count == codes.Count) pass3Keys.Insert(0, new() { Type = "text", Fields = cardCols, MatchMode = "exact" });
-
-        profile.Rules.Add(new RuleDefinition
-        {
-            Id = "PARTIAL_03_REF_DIVERGENT",
-            Type = "partial",
-            Datasets = codes,
-            MinScore = 0.80m,
-            Remarks = "Possible match on core attributes; approval/reference code divergent",
-            Keys = pass3Keys
-        });
-
-        // Pass 4: Settlement Date Lag
-        var pass4Keys = new List<KeyDefinition>
-        {
-            new() { Type = "text", Fields = refCols, MatchMode = "exact" },
-            new() { Type = "amount", Fields = amtCols, MatchMode = "exact" },
-            new() { Type = "date", Fields = dateCols, MatchMode = "fuzzy", Algorithm = "date_proximity", MinScore = 0.80m }
-        };
-        if (cardCols.Count == codes.Count) pass4Keys.Add(new() { Type = "text", Fields = cardCols, MatchMode = "exact" });
-
-        profile.Rules.Add(new RuleDefinition
-        {
-            Id = "PARTIAL_04_DATE_LAG",
-            Type = "partial",
-            Datasets = codes,
-            MinScore = 0.80m,
-            Remarks = "Possible match with 1-3 day date settlement difference",
-            Keys = pass4Keys
-        });
-
-        // Pass 5: Amount Variance / Fee Variance
-        var pass5Keys = new List<KeyDefinition>
-        {
-            new() { Type = "text", Fields = refCols, MatchMode = "exact" },
-            new() { Type = "date", Fields = dateCols, MatchMode = "exact" },
-            new() { Type = "amount", Fields = amtCols, MatchMode = "fuzzy", Algorithm = "numeric_best_practice", Tolerance = "1.00", MinScore = 0.80m }
-        };
-        if (cardCols.Count == codes.Count) pass5Keys.Add(new() { Type = "text", Fields = cardCols, MatchMode = "exact" });
-
-        profile.Rules.Add(new RuleDefinition
-        {
-            Id = "PARTIAL_05_AMOUNT_VARIANCE",
-            Type = "partial",
-            Datasets = codes,
-            MinScore = 0.80m,
-            Remarks = "Possible match on reference & date; amount variance within tolerance",
-            Keys = pass5Keys
-        });
-
         return profile;
     }
 
@@ -1133,7 +947,7 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
 
     private static ParsersProposalDto FallbackAnalyzeParsers(List<FileSnippetDto> files)
     {
-        var result = new ParsersProposalDto();
+        var result = new ParsersProposalDto { Source = "heuristic", Warnings = ["Deterministic parser inference was used; transformations must pass canonical output validation."] };
         foreach (var file in files)
         {
             var lines = (file.RawSnippet ?? "")
@@ -1255,6 +1069,22 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
         return result;
     }
 
+    private static bool SupportsCardMask(ParserProposalItemDto parser, string snippet, string source)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(source, @"(?i)(?:^|[^a-z])(?:card|pan)(?:[^a-z]|$)|^column_\d+$")) return false;
+        var lines = snippet.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (parser.Delimiter.Length != 1 || lines.Length == 0) return false;
+        var start = parser.HeaderMode == "none" ? 0 : parser.HeaderRowIndex + 1;
+        if (start < 0 || start >= lines.Length) return false;
+        var names = parser.HeaderMode == "none"
+            ? Enumerable.Range(1, SplitCsvLine(lines[0], parser.Delimiter[0]).Count).Select(i => $"column_{i}").ToList()
+            : SplitCsvLine(lines[start - 1], parser.Delimiter[0]);
+        var index = names.IndexOf(source);
+        var values = lines.Skip(start).Select(line => SplitCsvLine(line, parser.Delimiter[0])).Where(row => index >= 0 && index < row.Count)
+            .Select(row => row[index].Trim().Trim('\'')).Where(value => value.Length > 0).ToList();
+        return values.Count > 0 && values.All(value => System.Text.RegularExpressions.Regex.IsMatch(value, @"^\d{6}[\dXx*]{5,12}\d{4}$"));
+    }
+
     private static List<ParserStepProposalDto> InferFileSteps(
         List<string> lines,
         string headerMode,
@@ -1334,7 +1164,8 @@ public class AssistantAppService : ApplicationService, IAssistantAppService
                 }
             }
             // 2. Card Number Detection
-            else if ((System.Text.RegularExpressions.Regex.IsMatch(col, "(?i)(card|pan)") &&
+            else if ((System.Text.RegularExpressions.Regex.IsMatch(col, @"(?i)(?:^|[^a-z])(?:card|pan)(?:[^a-z]|$)|^card_number$") &&
+                      sampleVals.All(value => System.Text.RegularExpressions.Regex.IsMatch(value.Trim('\''), @"^\d{6}[\dXx*]{5,12}\d{4}$")) &&
                       !System.Text.RegularExpressions.Regex.IsMatch(col, "(?i)(brand|type|scheme|name|holder)")) ||
                      (headerMode == "none" && sampleVals.All(v => System.Text.RegularExpressions.Regex.IsMatch(v, @"^0*\d{15,19}$") && !v.Contains('.'))))
             {

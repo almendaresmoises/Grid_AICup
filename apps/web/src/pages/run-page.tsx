@@ -1,12 +1,12 @@
 import { Button } from "@workspace/ui/components/button"
 import { useMutation, useQuery } from "@tanstack/react-query"
+import { Loader2, Sparkles } from "lucide-react"
 import { useState } from "react"
-import { Link, useParams } from "react-router"
+import { Link, useNavigate, useParams } from "react-router"
 import { api } from "@/lib/api"
+import { startOrResumeAnalysis } from "@/lib/reconciliation-analysis"
 import type {
-  Investigation,
   MatchGroup,
-  RegressionPreview,
   RunDetail,
   UnresolvedRow,
 } from "@/lib/types"
@@ -16,12 +16,9 @@ import { labelClass, textareaClass } from "@/lib/ui"
 
 export function RunPage() {
   const { runId = "" } = useParams()
+  const navigate = useNavigate()
   const [context, setContext] = useState("")
-  const [investigation, setInvestigation] = useState<Investigation | null>(null)
-  const [proposal, setProposal] = useState("")
-  const [preview, setPreview] = useState<RegressionPreview | null>(null)
   const [error, setError] = useState("")
-  const [notice, setNotice] = useState("")
   const [selectedGroup, setSelectedGroup] = useState<MatchGroup | null>(null)
   const [selectedUnresolved, setSelectedUnresolved] = useState<UnresolvedRow | null>(null)
   const run = useQuery({
@@ -29,56 +26,21 @@ export function RunPage() {
     queryFn: () => api<RunDetail>(`/api/app/run/${runId}`),
   })
 
-  const investigate = useMutation({
+  const startAnalysis = useMutation({
     mutationFn: () =>
-      api<Investigation>("/api/app/assistant/investigate", {
-        method: "POST",
-        body: JSON.stringify({ runId, context }),
+      startOrResumeAnalysis({
+        requestId: crypto.randomUUID(),
+        profileId: run.data?.profileId ?? "",
+        sourceRunId: runId,
+        context: context.trim() || undefined,
       }),
     onSuccess: (result) => {
-      setInvestigation(result)
-      setProposal(result.proposedDefinitionJson)
-      setPreview(null)
-      setError("")
+      navigate(`/reconciliation/profiles/${run.data?.profileId}/analyses/${result.analysisId}`)
     },
     onError: (caught) =>
       setError(
-        caught instanceof Error ? caught.message : "Investigation failed"
+        caught instanceof Error ? caught.message : "Starting optimization failed"
       ),
-  })
-
-  const compare = useMutation({
-    mutationFn: () =>
-      api<RegressionPreview>("/api/app/assistant/preview-regression", {
-        method: "POST",
-        body: JSON.stringify({
-          profileId: run.data?.profileId,
-          runId,
-          proposedDefinitionJson: proposal,
-        }),
-      }),
-    onSuccess: (result) => {
-      setPreview(result)
-      setError("")
-    },
-    onError: (caught) =>
-      setError(caught instanceof Error ? caught.message : "Comparison failed"),
-  })
-
-  const approve = useMutation({
-    mutationFn: () =>
-      api(`/api/app/profile/${run.data?.profileId}/approve`, {
-        method: "POST",
-        body: JSON.stringify({ definitionJson: proposal }),
-      }),
-    onSuccess: () => {
-      setNotice(
-        "Profile approved. Start a new run from the profile to apply it. This run is unchanged."
-      )
-      setError("")
-    },
-    onError: (caught) =>
-      setError(caught instanceof Error ? caught.message : "Approval failed"),
   })
 
   if (run.isLoading) {
@@ -197,78 +159,37 @@ export function RunPage() {
 
       {detail.unresolvedRecords > 0 ? (
         <div className="flex flex-col gap-3 border bg-card p-5">
-          <h2 className="text-lg font-medium">Suggest a profile change</h2>
+          <div className="flex items-center gap-2">
+            <Sparkles className="size-5 text-primary" />
+            <h2 className="text-lg font-medium">Optimize reconciliation profile with AI</h2>
+          </div>
           <p className="text-sm text-muted-foreground">
-            The assistant can explain leftovers and propose the next profile
-            version. Matching stays deterministic, and nothing changes until you
-            approve.
+            Analyze unmatched and ambiguous records from this run to discover evidence-backed improvements.
+            Candidate rules are replayed deterministically against this run and regression baselines with zero regressions.
           </p>
           <label className="flex flex-col gap-1.5">
-            <span className={labelClass}>Context</span>
+            <span className={labelClass}>Optional business context</span>
             <textarea
               className={textareaClass}
+              placeholder="Provide specific notes, date/amount tolerances, or customer-specific edge cases..."
               value={context}
               onChange={(event) => setContext(event.target.value)}
             />
           </label>
           <div>
             <Button
-              disabled={investigate.isPending}
-              onClick={() => investigate.mutate()}
+              disabled={startAnalysis.isPending}
+              onClick={() => startAnalysis.mutate()}
             >
-              Suggest a profile change
+              {startAnalysis.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              Analyze and optimize profile
             </Button>
           </div>
           {error ? <ErrorNote message={error} /> : null}
-          {notice ? <p className="text-sm">{notice}</p> : null}
-          {investigation ? (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm">{investigation.diagnosis}</p>
-              <List title="Hypotheses" items={investigation.hypotheses} />
-              <List title="Changes" items={investigation.changeSummary} />
-              <List title="Risks" items={investigation.risks} />
-              <textarea
-                className={textareaClass}
-                value={proposal}
-                onChange={(event) => {
-                  setProposal(event.target.value)
-                  setPreview(null)
-                }}
-              />
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  disabled={compare.isPending}
-                  onClick={() => compare.mutate()}
-                >
-                  Compare with the original batch
-                </Button>
-                <Button
-                  disabled={!preview?.passed || approve.isPending}
-                  onClick={() => approve.mutate()}
-                >
-                  Approve proposal
-                </Button>
-              </div>
-              {preview ? (
-                <div className="text-sm">
-                  <p>{preview.message}</p>
-                  <PreviewStats
-                    title="This batch, proposed"
-                    stats={preview.proposedOnCurrent}
-                  />
-                  <PreviewStats
-                    title="Original batch, first approved profile"
-                    stats={preview.baselineProfile}
-                  />
-                  <PreviewStats
-                    title="Original batch, proposed profile"
-                    stats={preview.proposedOnBaseline}
-                  />
-                </div>
-              ) : null}
-            </div>
-          ) : null}
         </div>
       ) : null}
 
@@ -418,39 +339,5 @@ function Stat({ label, value }: { label: string; value: number }) {
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="text-2xl font-medium">{value.toLocaleString()}</p>
     </div>
-  )
-}
-
-function List({ title, items }: { title: string; items: string[] }) {
-  if (items.length === 0) {
-    return null
-  }
-  return (
-    <div>
-      <p className="text-sm font-medium">{title}</p>
-      <ul className="mt-1 list-disc pl-5 text-sm">
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function PreviewStats({
-  title,
-  stats,
-}: {
-  title: string
-  stats?: { matchedRecords: number; unresolvedRecords: number } | null
-}) {
-  if (!stats) {
-    return null
-  }
-  return (
-    <p>
-      {title}: {stats.matchedRecords} matched, {stats.unresolvedRecords}{" "}
-      unresolved
-    </p>
   )
 }

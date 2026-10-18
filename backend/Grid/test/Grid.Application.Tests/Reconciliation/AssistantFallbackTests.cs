@@ -201,9 +201,8 @@ public class AssistantFallbackTests
 
         var profile = ProfileJson.Parse(proposal.DefinitionJson);
         Assert.Equal(2, profile.Datasets.Count);
-        Assert.True(profile.Rules.Count >= 4);
+        Assert.Single(profile.Rules); // Extra passes require observed differences.
         Assert.Contains(profile.Rules, r => r.Id == "EXACT_01_FULL");
-        Assert.Contains(profile.Rules, r => r.Id == "PARTIAL_02_REF_FUZZY");
     }
 
     [Fact]
@@ -262,5 +261,25 @@ public class AssistantFallbackTests
         Assert.Contains(parser.Steps, s => s.Kind == "parseDate" && s.Source == "column_1" && s.Params["format"] == "%m%d%Y");
         Assert.Contains(parser.Steps, s => s.Kind == "scaleCents" && s.Source == "column_6");
         Assert.Contains(parser.Steps, s => s.Kind == "maskCard" && s.Source == "column_5");
+    }
+
+    [Fact]
+    public async Task Company_code_is_never_inferred_as_a_card_by_substring()
+    {
+        var result = await CreateService().ProposeParsersAsync(new ProposeParsersDto
+        {
+            Files = [
+                new() { Code = "A", RawSnippet = "company_code,card_number,amount\n101,5448301234560002,20.00" },
+                new() { Code = "B", RawSnippet = "company_code,card_number,amount\n101,5448301234560002,20.00" },
+                new() { Code = "C", RawSnippet = "company_code,card_number,amount\n101,5448301234560002,20.00" },
+                new() { Code = "D", RawSnippet = "company_code,card_number,amount\n101,5448301234560002,20.00" },
+            ],
+        });
+        Assert.Equal("heuristic", result.Source);
+        Assert.All(result.Parsers, parser =>
+        {
+            Assert.DoesNotContain(parser.Steps, step => step.Kind == "maskCard" && step.Source == "company_code");
+            Assert.Contains(parser.Steps, step => step.Kind == "maskCard" && step.Source == "card_number");
+        });
     }
 }

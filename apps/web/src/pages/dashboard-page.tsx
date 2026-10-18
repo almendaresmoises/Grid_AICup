@@ -1,16 +1,34 @@
 import { Button } from "@workspace/ui/components/button"
-import { useQuery } from "@tanstack/react-query"
-import { RefreshCw } from "lucide-react"
+import { Tooltip } from "@workspace/ui/components/tooltip"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ArrowUpRight, Info, Loader2, RefreshCw } from "lucide-react"
 import { useState } from "react"
-import { Link } from "react-router"
+import { Link, useNavigate } from "react-router"
 import { ErrorNote } from "@/components/error-note"
 import { RunOutcomeChart } from "@/components/run-outcome-chart"
 import { api } from "@/lib/api"
 import type { Dashboard } from "@/lib/dashboard"
+import type { RunSummary } from "@/lib/types"
 import { inputClass } from "@/lib/ui"
+
+function MatchRateInfo() {
+  return (
+    <Tooltip label="Match rate = (full match records + partial match records) ÷ total records × 100.">
+      <button
+        type="button"
+        aria-label="How match rate is calculated"
+        className="inline-flex rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <Info className="size-3.5" aria-hidden="true" />
+      </button>
+    </Tooltip>
+  )
+}
 
 export function DashboardPage() {
   const [period, setPeriod] = useState(30)
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const summary = useQuery({
     queryKey: ["dashboard", period],
     queryFn: ({ signal }) =>
@@ -20,6 +38,32 @@ export function DashboardPage() {
     refetchInterval: 60_000,
   })
   const data = summary.data
+  const timeZone = data?.timeZone === "Etc/UTC" ? "UTC" : data?.timeZone ?? "UTC"
+  const openProfileRun = useMutation({
+    mutationFn: async (profileId: string) => {
+      const runs = await queryClient.fetchQuery({
+        queryKey: ["runs", profileId],
+        queryFn: ({ signal }) =>
+          api<RunSummary[]>(`/api/app/run?profileId=${profileId}`, { signal }),
+        staleTime: 30_000,
+      })
+      const latestRun = runs
+        .filter((run) =>
+          run.profileId === profileId &&
+          run.status.toLowerCase() === "succeeded" &&
+          run.totalRecords > 0 &&
+          data &&
+          run.creationTime.slice(0, 10) >= data.fromDate &&
+          run.creationTime.slice(0, 10) <= data.throughDate
+        )
+        .sort((a, b) => Date.parse(b.creationTime) - Date.parse(a.creationTime))[0]
+      if (!latestRun) {
+        throw new Error("No completed run is available for this profile in the selected period. Refresh the dashboard and try again.")
+      }
+      return latestRun.id
+    },
+    onSuccess: (runId) => navigate(`/reconciliation/runs/${runId}/grid`),
+  })
   const stats = data
     ? [
         { label: "Completed runs", value: data.completedRuns.toLocaleString() },
@@ -84,9 +128,15 @@ export function DashboardPage() {
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {stats.map((stat) => (
-              <article className="border bg-card p-5" key={stat.label}>
-                <p className="text-sm text-muted-foreground">{stat.label}</p>
-                <p className="mt-2 text-3xl font-medium tabular-nums">
+              <article
+                className={`border bg-card p-5 ${stat.label === "Exceptions" ? "border-t-2 border-t-amber-500" : stat.label === "Match rate" ? "border-t-2 border-t-emerald-500" : ""}`}
+                key={stat.label}
+              >
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <span>{stat.label}</span>
+                  {stat.label === "Match rate" ? <MatchRateInfo /> : null}
+                </div>
+                <p className={`mt-2 text-3xl font-medium tabular-nums ${stat.label === "Exceptions" ? "text-amber-700 dark:text-amber-400" : stat.label === "Match rate" ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
                   {stat.value}
                 </p>
               </article>
@@ -100,7 +150,7 @@ export function DashboardPage() {
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Daily record counts · {data.fromDate} to {data.throughDate} ·{" "}
-                  {data.timeZone}
+                  {timeZone}
                 </p>
               </div>
               <span className="text-xs text-muted-foreground">
@@ -120,7 +170,7 @@ export function DashboardPage() {
               <RunOutcomeChart
                 key={period}
                 days={data.days}
-                timeZone={data.timeZone}
+                timeZone={timeZone}
               />
               <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
                 Full match includes exact and aggregate matches. Partial match
@@ -139,6 +189,14 @@ export function DashboardPage() {
                 completed runs in the selected period. Profiles without
                 processed records are excluded.
               </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Select a profile to view its latest completed run in this period.
+              </p>
+              {openProfileRun.error ? (
+                <div className="mt-3">
+                  <ErrorNote message={openProfileRun.error.message} />
+                </div>
+              ) : null}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -146,7 +204,9 @@ export function DashboardPage() {
                   <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
                     <th className="px-5 py-3 font-medium">Profile</th>
                     <th className="px-5 py-3 text-right font-medium">
-                      Match rate
+                      <span className="inline-flex items-center gap-1.5">
+                        Match rate <MatchRateInfo />
+                      </span>
                     </th>
                     <th className="px-5 py-3 text-right font-medium">
                       Full match
@@ -174,15 +234,31 @@ export function DashboardPage() {
                     data.lowestMatchProfiles.map((profile) => (
                       <tr
                         key={profile.profileId}
-                        className="border-b last:border-0 hover:bg-muted/30"
+                        className="cursor-pointer border-b transition-colors last:border-0 hover:bg-muted/50 focus-within:bg-muted/50"
+                        onClick={() => {
+                          if (!openProfileRun.isPending) openProfileRun.mutate(profile.profileId)
+                        }}
+                        aria-busy={openProfileRun.isPending && openProfileRun.variables === profile.profileId}
                       >
                         <td className="px-5 py-3">
-                          <Link
-                            className="font-medium underline-offset-4 hover:underline"
-                            to={`/reconciliation/profiles/${profile.profileId}`}
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5 rounded-sm text-left font-medium underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
+                            disabled={openProfileRun.isPending}
+                            title="View latest completed run"
+                            aria-label={`View latest completed run for ${profile.profileName}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              openProfileRun.mutate(profile.profileId)
+                            }}
                           >
                             {profile.profileName}
-                          </Link>
+                            {openProfileRun.isPending && openProfileRun.variables === profile.profileId ? (
+                              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <ArrowUpRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                            )}
+                          </button>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {profile.totalRecords.toLocaleString()} records
                           </p>

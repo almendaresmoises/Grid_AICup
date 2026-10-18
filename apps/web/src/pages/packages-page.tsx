@@ -1,14 +1,20 @@
 import { Button } from "@workspace/ui/components/button"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ChevronDown, ChevronRight, Database, Eye, Pencil, Plus, Search, ShieldCheck, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronRight, Database, Eye, Loader2, Pencil, Plus, Search, ShieldCheck, Sparkles, Trash2 } from "lucide-react"
 import { Fragment, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { ErrorNote } from "@/components/error-note"
 import { Modal } from "@/components/modal"
 import { OriginCell } from "@/components/origin-cell"
 import { api } from "@/lib/api"
+import {
+  getProfileStatuses,
+  reconciliationAnalysisKeys,
+  startOrResumeAnalysis,
+  type ProfileAnalysisSummary,
+} from "@/lib/reconciliation-analysis"
 import { parseProfile, type Package, type Profile } from "@/lib/types"
-import { inputClass, labelClass } from "@/lib/ui"
+import { inputClass, labelClass, textareaClass } from "@/lib/ui"
 
 export function PackagesPage() {
   const navigate = useNavigate()
@@ -19,6 +25,9 @@ export function PackagesPage() {
   const [description, setDescription] = useState("")
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [drilldownItem, setDrilldownItem] = useState<{ package: Package; profile?: Profile } | null>(null)
+  const [analyzeTarget, setAnalyzeTarget] = useState<{ package: Package; summary?: ProfileAnalysisSummary } | null>(null)
+  const [analyzeContext, setAnalyzeContext] = useState("")
+
   const packages = useQuery({
     queryKey: ["packages"],
     queryFn: () => api<Package[]>("/api/app/package"),
@@ -28,6 +37,47 @@ export function PackagesPage() {
     enabled: Boolean(packages.data?.length),
     queryFn: () => Promise.all((packages.data ?? []).map((item) => api<Profile>(`/api/app/profile/${item.profileId}`))),
   })
+
+  const profileIds = useMemo(() => (packages.data ?? []).map((p) => p.profileId), [packages.data])
+  const profileStatuses = useQuery({
+    queryKey: reconciliationAnalysisKeys.profileStatuses(profileIds),
+    enabled: profileIds.length > 0,
+    queryFn: () => getProfileStatuses(profileIds),
+  })
+  const statusMap = useMemo(
+    () => new Map(profileStatuses.data?.map((s) => [s.profileId, s]) ?? []),
+    [profileStatuses.data]
+  )
+
+  const startAnalysisMutation = useMutation({
+    mutationFn: async ({ profileId, sourceRunId, context }: { profileId: string; sourceRunId?: string; context?: string }) => {
+      return startOrResumeAnalysis({
+        requestId: crypto.randomUUID(),
+        profileId,
+        sourceRunId,
+        context,
+      })
+    },
+    onSuccess: (result, variables) => {
+      setAnalyzeTarget(null)
+      setAnalyzeContext("")
+      navigate(`/reconciliation/profiles/${variables.profileId}/analyses/${result.analysisId}`)
+    },
+  })
+
+  const handleAnalyzeClick = (pkg: Package, summary?: ProfileAnalysisSummary) => {
+    if (summary?.activeAnalysisId) {
+      navigate(`/reconciliation/profiles/${pkg.profileId}/analyses/${summary.activeAnalysisId}`)
+      return
+    }
+    if (summary?.lastAnalysisId && summary.actionType !== "start") {
+      navigate(`/reconciliation/profiles/${pkg.profileId}/analyses/${summary.lastAnalysisId}`)
+      return
+    }
+    setAnalyzeTarget({ package: pkg, summary })
+    setAnalyzeContext("")
+  }
+
   const create = useMutation({
     mutationFn: () => api<Package>("/api/app/package", { method: "POST", body: JSON.stringify({ name, description }) }),
     onSuccess: async (created) => {
@@ -157,6 +207,7 @@ export function PackagesPage() {
                 <th className="px-3 py-2.5 font-medium">Datasets</th>
                 <th className="px-3 py-2.5 font-medium">Rules</th>
                 <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">Optimization</th>
                 <th className="px-3 py-2.5 font-medium">Origin</th>
                 <th className="px-3 py-2.5 text-right font-medium"><span className="sr-only">Actions</span></th>
               </tr>
@@ -164,7 +215,7 @@ export function PackagesPage() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-muted-foreground px-4 py-10 text-center">
+                  <td colSpan={8} className="text-muted-foreground px-4 py-10 text-center">
                     <ShieldCheck className="mx-auto mb-2 size-6 opacity-40" />
                     {search ? "No profiles match the current search." : "No reconciliation profiles yet."}
                   </td>
@@ -188,6 +239,30 @@ export function PackagesPage() {
                           <span className={`size-1.5 ${item.profileStatus === "Approved" ? "bg-primary" : "bg-foreground/30"}`} />
                           {item.profileStatus}
                         </span>
+                      </td>
+                      <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                        {(() => {
+                          const summary = statusMap.get(item.profileId)
+                          if (!summary) return <span className="text-muted-foreground text-xs">—</span>
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs px-2.5 gap-1.5 font-normal"
+                                onClick={() => handleAnalyzeClick(item, summary)}
+                              >
+                                <Sparkles className="size-3 text-primary shrink-0" />
+                                <span>{summary.actionLabel}</span>
+                              </Button>
+                              {summary.activeStatus ? (
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  ({summary.activeStatus})
+                                </span>
+                              ) : null}
+                            </div>
+                          )
+                        })()}
                       </td>
                       <td className="px-3 py-3"><OriginCell createdWithAi={item.createdWithAi || profile?.createdWithAi} /></td>
                       <td className="px-3 py-3 text-right" onClick={(event) => event.stopPropagation()}>
@@ -223,7 +298,7 @@ export function PackagesPage() {
                     </tr>
                     {expanded ? (
                       <tr className="border-b bg-muted/20">
-                        <td colSpan={7} className="px-4 py-3">
+                        <td colSpan={8} className="px-4 py-3">
                           <div className="grid gap-4 sm:grid-cols-2">
                             <div>
                               <p className="text-muted-foreground mb-1 flex items-center gap-1 text-xs"><Database className="size-3" /> Datasets</p>
@@ -346,6 +421,91 @@ export function PackagesPage() {
             )
           })()
         ) : null}
+      </Modal>
+
+      {/* AI Optimization Scope Confirmation Modal */}
+      <Modal
+        isOpen={Boolean(analyzeTarget)}
+        onClose={() => setAnalyzeTarget(null)}
+        title="Optimize reconciliation with AI"
+        description={analyzeTarget ? `Profile: ${analyzeTarget.package.name} (v${analyzeTarget.package.profileVersion})` : ""}
+        size="lg"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setAnalyzeTarget(null)}>
+              Cancel
+            </Button>
+            {analyzeTarget?.summary?.actionType === "no_run" ? (
+              <Button
+                size="sm"
+                render={<Link to="/reconciliation/runs/new" />}
+              >
+                Create run first
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={startAnalysisMutation.isPending}
+                onClick={() => {
+                  if (analyzeTarget) {
+                    startAnalysisMutation.mutate({
+                      profileId: analyzeTarget.package.profileId,
+                      sourceRunId: analyzeTarget.summary?.latestRunId,
+                      context: analyzeContext,
+                    })
+                  }
+                }}
+              >
+                {startAnalysisMutation.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="size-3.5" />
+                )}
+                Start optimization
+              </Button>
+            )}
+          </div>
+        }
+      >
+        {analyzeTarget?.summary?.actionType === "no_run" ? (
+          <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="size-4 shrink-0" />
+              <span className="font-medium">No successful run found</span>
+            </div>
+            <p>
+              AI reconciliation optimization analyzes unmatched and ambiguous records from a completed run. Please create and run reconciliation for this profile before optimizing.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4 text-sm">
+            <div className="border rounded bg-muted/20 p-3 text-xs flex flex-col gap-1">
+              <span className="font-semibold text-foreground">Source input scope:</span>
+              <p className="text-muted-foreground">
+                {analyzeTarget?.summary?.latestRunId
+                  ? `Default source run: #${analyzeTarget.summary.latestRunId.slice(0, 8)} (latest successful run)`
+                  : "Latest successful run"}
+              </p>
+              {analyzeTarget?.summary?.explanation ? (
+                <p className="text-muted-foreground italic">{analyzeTarget.summary.explanation}</p>
+              ) : null}
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className={labelClass}>Optional business context</span>
+              <textarea
+                className={textareaClass}
+                placeholder="Describe known exceptions, date/fee tolerances, or edge cases to guide the advisor..."
+                rows={3}
+                value={analyzeContext}
+                onChange={(e) => setAnalyzeContext(e.target.value)}
+              />
+            </label>
+            {startAnalysisMutation.error ? (
+              <ErrorNote message={startAnalysisMutation.error.message} />
+            ) : null}
+          </div>
+        )}
       </Modal>
     </div>
   )

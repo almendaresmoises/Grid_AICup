@@ -30,5 +30,14 @@ public static class ParsersDbContextModelCreatingExtensions
             b.Property(x => x.Error).HasMaxLength(4000);
             b.HasIndex(x => x.ParserConfigurationId);
         });
+
+        builder.Entity<ParserConfigurationRevision>(b =>
+        {
+            b.ToTable(ParserConsts.DbTablePrefix + "ParserConfigurationRevisions", ParserConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.ContentHash).IsRequired().HasMaxLength(64);
+            b.Property(x => x.SnapshotJson).IsRequired();
+            b.HasIndex(x => new { x.ParserConfigurationId, x.ContentHash }).IsUnique();
+        });
     }
 }

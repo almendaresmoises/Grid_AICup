@@ -4,7 +4,7 @@ set -e
 echo "=== Grid Cloud Run Deployment Runner (Bash / Cloud Shell) ==="
 
 PROJECT_ID="${1:-$(gcloud config get-value project 2>/dev/null)}"
-REGION="${2:-asia-southeast1}"
+REGION="${2:-us-central1}"
 SUPABASE_CONNECTION_STRING="${3}"
 WORKER_SECRET="${4:-$(openssl rand -base64 32)}"
 GEMINI_API_KEY="${5}"
@@ -45,6 +45,7 @@ gcloud run deploy grid-api \
     --image="$API_IMAGE" \
     --platform=managed \
     --region="$REGION" \
+    --port=8080 \
     --allow-unauthenticated \
     --service-account="$API_SA" \
     --memory=1Gi \
@@ -66,16 +67,19 @@ docker push "$WORKER_IMAGE"
 
 # --- 4. DEPLOY WORKER TO CLOUD RUN ---
 echo -e "\n[4/4] Deploying Grid Worker to Cloud Run..."
-WORKER_ENV_VARS="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET=${BUCKET_NAME},PUBSUB_PARSER_TOPIC=grid-parser-runs,PUBSUB_PARSER_SUBSCRIPTION=grid-parser-runs-etl,BACKEND_API_URL=${API_URL},GRID_WORKER_SECRET=${WORKER_SECRET},PUBSUB_MODE=auto,PORT=8080"
+WORKER_ENV_VARS="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET=${BUCKET_NAME},PUBSUB_PARSER_TOPIC=grid-parser-runs,PUBSUB_PARSER_SUBSCRIPTION=grid-parser-runs-etl,BACKEND_API_URL=${API_URL},GRID_API_URL=${API_URL},GRID_WORKER_SECRET=${WORKER_SECRET},PUBSUB_MODE=auto"
 
 gcloud run deploy grid-worker \
     --image="$WORKER_IMAGE" \
     --platform=managed \
     --region="$REGION" \
+    --port=8080 \
     --no-allow-unauthenticated \
     --service-account="$WORKER_SA" \
     --memory=2Gi \
     --cpu=2 \
+    --no-cpu-throttling \
+    --min-instances=1 \
     --timeout=600 \
     --set-env-vars="$WORKER_ENV_VARS"
 

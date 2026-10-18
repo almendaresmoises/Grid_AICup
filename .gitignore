@@ -36,3 +36,10 @@ dist-ssr
 # typescript
 *.tsbuildinfo
 handoffs/
+
+guides/
+
+# Generated Python and Firebase files
+__pycache__/
+*.py[cod]
+.firebase/

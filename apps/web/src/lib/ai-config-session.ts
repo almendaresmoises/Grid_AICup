@@ -4,7 +4,11 @@ import {
   type ParserConfiguration,
   type ParserRun,
 } from "@/lib/canonical"
-import { uploadAndParse } from "@/lib/parser-runs"
+import { queueParserRun } from "@/lib/parser-runs"
+import type {
+  ConfigurationJob,
+  ConfigurationValidation,
+} from "@/lib/ai-configuration"
 import {
   autoMap,
   compilePipeline,
@@ -18,8 +22,10 @@ import {
   parseSample,
   syncMappings,
   type SourceColumn,
+  type HeaderMode,
+  type StudioStep,
 } from "@/lib/parser-studio"
-import { parseProfile, type Package } from "@/lib/types"
+import { type Package } from "@/lib/types"
 
 export {
   detectDelimiter,
@@ -29,7 +35,27 @@ export {
   isZipFile,
 }
 
-export type AiSessionStatus = "idle" | "running" | "paused" | "completed" | "error"
+type ParserProposal = {
+  code: string
+  delimiter: string
+  headerMode: HeaderMode
+  headerRowIndex: number
+  skipRows: number
+  removeTotalRows: boolean
+  totalRowKeywords: string
+  steps: StudioStep[]
+}
+type StoredFile = {
+  id: string
+  file: File
+  datasetCode?: string
+  parserCode?: string
+  code?: string
+  name?: string
+}
+
+export type AiSessionStatus =
+  "idle" | "running" | "paused" | "completed" | "error"
 
 export type StagedFileMeta = {
   id: string
@@ -58,9 +84,15 @@ export type CreatedArtifacts = {
   runs: Record<string, ParserRun>
   package?: Package
   definitionJson?: string
+  configurationId?: string
+  parserProposalSource?: string
+  parserProposalWarnings?: string[]
 }
 
 export type Completion = {
+  configurationId?: string
+  validation?: ConfigurationValidation
+  source?: string
   package: Package
   definitionJson: string
   parserRunIds: Record<string, string>
@@ -88,7 +120,7 @@ export type AiFallbackDecision = {
     skipRows: number
     removeTotalRows: boolean
     totalRowKeywords: string
-    steps: any[]
+    steps: StudioStep[]
   }[]
 }
 
@@ -110,9 +142,9 @@ export type AiSessionState = {
   updatedAt?: number
 }
 
-const STORAGE_KEY_SESSION = "grid_ai_config_session_v3"
+const STORAGE_KEY_SESSION = "grid_ai_config_session_v4"
 export const STORAGE_KEY_CONTEXT = "grid_ai_config_context"
-export const STORAGE_KEY_COMPLETION = "grid_ai_config_completion"
+export const STORAGE_KEY_COMPLETION = "grid_ai_config_completion_v2"
 
 const IDB_NAME = "grid_ai_config_store"
 const IDB_STORE = "staged_files"
@@ -187,7 +219,7 @@ export async function loadSessionFiles(): Promise<
     const db = await openDb()
     const tx = db.transaction(IDB_STORE, "readonly")
     const store = tx.objectStore(IDB_STORE)
-    const rawList = await new Promise<any[]>((resolve, reject) => {
+    const rawList = await new Promise<StoredFile[]>((resolve, reject) => {
       const req = store.getAll()
       req.onsuccess = () => resolve(req.result ?? [])
       req.onerror = () => reject(req.error)
@@ -260,7 +292,8 @@ function loadInitialState(): AiSessionState {
         status: "completed",
         currentStep: 6,
         stepMessage: "All 6 configuration steps completed successfully.",
-        statusText: "Configuration complete. All uploaded files have been parsed.",
+        statusText:
+          "Configuration complete. All uploaded files have been parsed.",
         error: "",
         elapsedSeconds: 0,
         files: completion.entries.map((e) => ({
@@ -391,6 +424,9 @@ export function inferSemanticRole(
   if (present.length === 0) return null
 
   const clean = colName.trim()
+  if (/^(company_code|branch_code|reference_code)$/i.test(clean)) {
+    return { canonicalName: clean.toLowerCase(), polarsType: "pl.String" }
+  }
   const isNoiseField =
     /(currency|curr\b|%|rate\b|time\b|name\b|issuer|entry mode|plan\b|tenor\b|terms\b|brand\b|tender_type|cashier|adid|cwt\b|ewt\b|tip\b|meta_row_hash|file date|ipp)/i.test(
       clean
@@ -447,7 +483,9 @@ export function inferSemanticRole(
   ) {
     return { canonicalName: "app_code", polarsType: "pl.String" }
   }
-  if (/^(terminal_id|terminal id|tid|eft_terminal|pos_terminal)$/i.test(clean)) {
+  if (
+    /^(terminal_id|terminal id|tid|eft_terminal|pos_terminal)$/i.test(clean)
+  ) {
     return { canonicalName: "terminal_id", polarsType: "pl.String" }
   }
   if (
@@ -478,18 +516,30 @@ export function inferSemanticRole(
 
   // 2. Headerless positional conventions (BDO / Gateway headerless TXT files):
   if (clean.startsWith("column_")) {
-    if (clean === "column_1") return { canonicalName: "trx_date", polarsType: "pl.Date" }
-    if (clean === "column_2") return { canonicalName: "settle_date", polarsType: "pl.Date" }
-    if (clean === "column_4") return { canonicalName: "merchant_code", polarsType: "pl.String" }
-    if (clean === "column_5") return { canonicalName: "card_number", polarsType: "pl.String" }
-    if (clean === "column_6") return { canonicalName: "gross_amt", polarsType: "pl.Decimal(18,2)" }
-    if (clean === "column_7") return { canonicalName: "net_amt", polarsType: "pl.Decimal(18,2)" }
-    if (clean === "column_8") return { canonicalName: "app_code", polarsType: "pl.String" }
-    if (clean === "column_9") return { canonicalName: "rrn", polarsType: "pl.String" }
-    if (clean === "column_10") return { canonicalName: "terminal_id", polarsType: "pl.String" }
-    if (clean === "column_15") return { canonicalName: "fee_amt", polarsType: "pl.Decimal(18,2)" }
-    if (clean === "column_17") return { canonicalName: "terminal_id", polarsType: "pl.String" }
-    if (clean === "column_18") return { canonicalName: "order_id", polarsType: "pl.String" }
+    if (clean === "column_1")
+      return { canonicalName: "trx_date", polarsType: "pl.Date" }
+    if (clean === "column_2")
+      return { canonicalName: "settle_date", polarsType: "pl.Date" }
+    if (clean === "column_4")
+      return { canonicalName: "merchant_code", polarsType: "pl.String" }
+    if (clean === "column_5")
+      return { canonicalName: "card_number", polarsType: "pl.String" }
+    if (clean === "column_6")
+      return { canonicalName: "gross_amt", polarsType: "pl.Decimal(18,2)" }
+    if (clean === "column_7")
+      return { canonicalName: "net_amt", polarsType: "pl.Decimal(18,2)" }
+    if (clean === "column_8")
+      return { canonicalName: "app_code", polarsType: "pl.String" }
+    if (clean === "column_9")
+      return { canonicalName: "rrn", polarsType: "pl.String" }
+    if (clean === "column_10")
+      return { canonicalName: "terminal_id", polarsType: "pl.String" }
+    if (clean === "column_15")
+      return { canonicalName: "fee_amt", polarsType: "pl.Decimal(18,2)" }
+    if (clean === "column_17")
+      return { canonicalName: "terminal_id", polarsType: "pl.String" }
+    if (clean === "column_18")
+      return { canonicalName: "order_id", polarsType: "pl.String" }
 
     if (steps?.some((s) => s.source === clean && s.kind === "scaleCents")) {
       return { canonicalName: "gross_amt", polarsType: "pl.Decimal(18,2)" }
@@ -582,11 +632,15 @@ export async function consultAiFallback(
       return response
     }
   } catch (err) {
-    console.warn("AI Fallback endpoint error, using local decision heuristic:", err)
+    console.warn(
+      "AI Fallback endpoint error, using local decision heuristic:",
+      err
+    )
   }
 
   // Local fallback decision heuristic if network/backend is unreachable
-  const isNetworkOrTimeout = /timeout|could not be reached|canceled|network|deadline/i.test(errorMessage)
+  const isNetworkOrTimeout =
+    /timeout|could not be reached|canceled|network|deadline/i.test(errorMessage)
   if (isNetworkOrTimeout) {
     const timeoutDecision: AiFallbackDecision = {
       canRecover: true,
@@ -642,7 +696,8 @@ export async function consultAiFallback(
       filesToSkip.length > 0
         ? `Identified ${filesToSkip.length} empty file(s) and ${adjustedParsers.length} headerless/raw data file(s).`
         : "Identified headerless data records in uploaded file.",
-    actionTaken: filesToSkip.length > 0 ? "skip_empty_files" : "retry_with_none_header",
+    actionTaken:
+      filesToSkip.length > 0 ? "skip_empty_files" : "retry_with_none_header",
     userMessage:
       filesToSkip.length > 0
         ? `AI Decision: Safely bypassed empty file(s) (${filesToSkip.join(", ")}) and adapted parser to headerless mode.`
@@ -681,7 +736,9 @@ async function runWorkflowSteps(signal: AbortSignal) {
     new Set(state.files.map((f) => f.datasetCode))
   )
   if (distinctDatasetCodes.length < 2) {
-    throw new Error("At least two distinct datasets are required for reconciliation.")
+    throw new Error(
+      "At least two distinct datasets are required for reconciliation."
+    )
   }
 
   const fileDataList: {
@@ -781,7 +838,9 @@ async function runWorkflowSteps(signal: AbortSignal) {
           !item.excelInfo?.columns.length || !item.excelInfo?.sampleRows.length
         )
       }
-      return !item.fullText?.replace(/^\uFEFF/, "").trim() || item.file.size === 0
+      return (
+        !item.fullText?.replace(/^\uFEFF/, "").trim() || item.file.size === 0
+      )
     })
     .map((item) => ({
       fileId: item.meta.id,
@@ -790,50 +849,39 @@ async function runWorkflowSteps(signal: AbortSignal) {
       parserCode: item.meta.parserCode,
       fileSize: item.file.size,
       rawSnippet: item.snippet || "",
-      errorDetail: item.file.size === 0 ? "0-byte file" : "No readable data rows found",
+      errorDetail:
+        item.file.size === 0 ? "0-byte file" : "No readable data rows found",
     }))
 
-  const skippedFileNames = new Set<string>()
-
   if (initialAnomalies.length > 0) {
-    const earlyDecision = await consultAiFallback(
-      1,
-      "Inspect Samples",
-      `Detected ${initialAnomalies.length} empty or zero-byte file(s) during initial scan`,
-      initialAnomalies,
-      signal
+    throw new Error(
+      `No usable records could be inspected in: ${initialAnomalies.map((file) => file.fileName).join(", ")}. Review these files before continuing.`
     )
-    if (earlyDecision?.filesToSkip?.length) {
-      for (const skipped of earlyDecision.filesToSkip) {
-        skippedFileNames.add(skipped)
-      }
-    }
   }
+  const activeFileList = fileDataList
 
-  // Filter out skipped files
-  const activeFileList = fileDataList.filter(
-    (item) => !skippedFileNames.has(item.file.name)
-  )
-
-  const parserProposals: Record<string, any> = {}
+  const parserProposals: Record<string, ParserProposal> = {}
   if (activeFileList.length > 0) {
     try {
-      const proposalResp = await api<{ parsers: any[] }>(
-        "/api/app/assistant/propose-parsers",
-        {
-          method: "POST",
-          signal,
-          body: JSON.stringify({
-            files: activeFileList.map((item) => ({
-              code: item.meta.parserCode,
-              fileName: item.file.name,
-              rawSnippet: item.snippet,
-            })),
-            context: state.context,
-          }),
-        }
-      )
+      const proposalResp = await api<{
+        parsers: ParserProposal[]
+        source: string
+        warnings: string[]
+      }>("/api/app/assistant/propose-parsers", {
+        method: "POST",
+        signal,
+        body: JSON.stringify({
+          files: activeFileList.map((item) => ({
+            code: item.meta.parserCode,
+            fileName: item.file.name,
+            rawSnippet: item.snippet,
+          })),
+          context: state.context,
+        }),
+      })
       if (proposalResp?.parsers) {
+        state.artifacts.parserProposalSource = proposalResp.source
+        state.artifacts.parserProposalWarnings = proposalResp.warnings
         for (const p of proposalResp.parsers) {
           parserProposals[p.code] = p
         }
@@ -857,7 +905,7 @@ async function runWorkflowSteps(signal: AbortSignal) {
     meta: StagedFileMeta
     file: File
     sample: { columns: SourceColumn[]; sampleRows: string[][] }
-    proposal?: any
+    proposal?: ParserProposal
     isExcel: boolean
     sheetName?: string
     excelInfo?: ReturnType<typeof parseExcelSample>
@@ -888,8 +936,7 @@ async function runWorkflowSteps(signal: AbortSignal) {
         continue
       }
       const proposal = parserProposals[item.meta.parserCode]
-      const delimiter =
-        proposal?.delimiter || detectDelimiter(rawText)
+      const delimiter = proposal?.delimiter || detectDelimiter(rawText)
       const headerMode = proposal?.headerMode || "firstRow"
       const headerRowIndex = proposal?.headerRowIndex || 0
 
@@ -916,9 +963,7 @@ async function runWorkflowSteps(signal: AbortSignal) {
               fileSize: item.file.size,
               rawSnippet: item.snippet,
               errorDetail:
-                parseErr instanceof Error
-                  ? parseErr.message
-                  : String(parseErr),
+                parseErr instanceof Error ? parseErr.message : String(parseErr),
             },
           ],
           signal
@@ -928,8 +973,7 @@ async function runWorkflowSteps(signal: AbortSignal) {
           (p) => p.code === item.meta.parserCode
         )
         const retryHeaderMode = adj?.headerMode || "none"
-        const retryDelimiter =
-          adj?.delimiter || detectDelimiter(rawText)
+        const retryDelimiter = adj?.delimiter || detectDelimiter(rawText)
         sample = parseSample(
           item.fullText || "",
           retryDelimiter,
@@ -939,40 +983,21 @@ async function runWorkflowSteps(signal: AbortSignal) {
       }
 
       if (!sample.columns.length || !sample.sampleRows.length) {
-        // If still yielding no sample records, consult AI fallback to decide whether to skip
-        const emptyDecision = await consultAiFallback(
-          1,
-          "Inspect Samples",
-          `File ${item.file.name} yielded no records`,
-          [
-            {
-              fileId: item.meta.id,
-              fileName: item.file.name,
-              datasetCode: item.meta.datasetCode,
-              parserCode: item.meta.parserCode,
-              fileSize: item.file.size,
-              rawSnippet: item.snippet,
-              errorDetail: "0 rows produced from sample parsing",
-            },
-          ],
-          signal
+        throw new Error(
+          `${item.file.name} produced no usable sample. Review its parser settings; the file was not skipped.`
         )
-        if (emptyDecision?.filesToSkip.includes(item.file.name)) {
-          console.warn(`AI decided to skip empty file ${item.file.name}`)
-          continue
-        }
       }
 
       const resolvedProposal = proposal
         ? {
             ...proposal,
-            delimiter: sample.delimiter,
-            headerMode: sample.headerMode,
+            delimiter: sample.delimiter || delimiter,
+            headerMode: sample.headerMode || headerMode,
           }
         : {
             code: item.meta.parserCode,
-            delimiter: sample.delimiter,
-            headerMode: sample.headerMode,
+            delimiter: sample.delimiter || delimiter,
+            headerMode: sample.headerMode || headerMode,
             headerRowIndex: 0,
             skipRows: 0,
             removeTotalRows: false,
@@ -1017,11 +1042,13 @@ async function runWorkflowSteps(signal: AbortSignal) {
 
   for (const item of preparedList) {
     if (Array.isArray(item.proposal?.steps)) {
-      item.proposal.steps = item.proposal.steps.filter((s: any) => {
+      item.proposal.steps = item.proposal.steps.filter((s: StudioStep) => {
         const colIdx = item.sample.columns.findIndex((c) => c.name === s.source)
         const vals =
           colIdx >= 0
-            ? item.sample.sampleRows.map((r) => r[colIdx]?.trim() ?? "").filter(Boolean)
+            ? item.sample.sampleRows
+                .map((r) => r[colIdx]?.trim() ?? "")
+                .filter(Boolean)
             : []
         if (s.kind === "scaleCents") {
           const isAmtCol =
@@ -1077,8 +1104,9 @@ async function runWorkflowSteps(signal: AbortSignal) {
 
   for (const [, intCols] of Object.entries(integerAmountsByDataset)) {
     for (const { item, colName, values } of intCols) {
-      const medianInt =
-        values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+      const medianInt = values.sort((a, b) => a - b)[
+        Math.floor(values.length / 2)
+      ]
       const isAmountNamedOrPosition =
         /(amt|amount|gross|net|fee|price|mdr)/i.test(colName) ||
         colName === "column_6" ||
@@ -1114,7 +1142,7 @@ async function runWorkflowSteps(signal: AbortSignal) {
         if (!item.proposal.steps) item.proposal.steps = []
         if (
           !item.proposal.steps.some(
-            (s: any) => s.source === colName && s.kind === "scaleCents"
+            (s: StudioStep) => s.source === colName && s.kind === "scaleCents"
           )
         ) {
           item.proposal.steps.push({
@@ -1130,151 +1158,10 @@ async function runWorkflowSteps(signal: AbortSignal) {
     }
   }
 
-  // Step 2: AI Rule Drafting across Datasets
-  let definitionJson = state.artifacts.definitionJson
-  if (!definitionJson) {
-    state = {
-      ...state,
-      currentStep: 2,
-      stepMessage:
-        "Synthesizing dataset schema profiles and sending sample records to Gemini to draft match rules…",
-      statusText: "Drafting matching rules across dataset groups",
-    }
-    notify()
-
-    const canonicalPriority: Record<string, number> = {
-      app_code: 1,
-      trx_date: 2,
-      gross_amt: 3,
-      card_number: 4,
-      rrn: 5,
-      order_id: 6,
-      settle_date: 7,
-      net_amt: 8,
-      fee_amt: 9,
-      merchant_code: 10,
-      terminal_id: 11,
-    }
-
-    const csvSamples: Record<string, string> = {}
-    for (const dCode of distinctDatasetCodes) {
-      const groupFiles = preparedList.filter(
-        (item) => item.meta.datasetCode === dCode
-      )
-      const allColNames: string[] = []
-      const seenColNames = new Set<string>()
-
-      for (const gf of groupFiles) {
-        for (const col of gf.sample.columns) {
-          if (col.included === false) continue
-          const sampleVals = gf.sample.sampleRows
-            .map((r) => r[gf.sample.columns.findIndex((c) => c.name === col.name)] ?? "")
-            .filter(Boolean)
-          if (sampleVals.length === 0) continue
-
-          const semantic = inferSemanticRole(col.name, sampleVals, gf.proposal?.steps)
-          const effectiveName = semantic?.canonicalName || col.name
-          if (effectiveName.startsWith("column_") && !semantic) continue
-
-          if (!seenColNames.has(effectiveName)) {
-            seenColNames.add(effectiveName)
-            allColNames.push(effectiveName)
-          }
-        }
-      }
-
-      allColNames.sort(
-        (a, b) => (canonicalPriority[a] ?? 99) - (canonicalPriority[b] ?? 99)
-      )
-
-      const combinedRows: string[][] = []
-      for (const gf of groupFiles) {
-        const rowsToTake = Math.max(1, Math.floor(4 / groupFiles.length))
-        for (const r of gf.sample.sampleRows.slice(0, rowsToTake)) {
-          const rowObj: Record<string, string> = {}
-          gf.sample.columns.forEach((c, idx) => {
-            const sampleVals = gf.sample.sampleRows.map((row) => row[idx] ?? "").filter(Boolean)
-            const semantic = inferSemanticRole(c.name, sampleVals, gf.proposal?.steps)
-            const effectiveName = semantic?.canonicalName || c.name
-            let val = r[idx] ?? ""
-            if (gf.proposal?.steps?.some((s: any) => s.source === c.name && s.kind === "scaleCents")) {
-              const num = parseInt(val, 10)
-              if (!isNaN(num)) val = (num / 100.0).toFixed(2)
-            }
-            rowObj[effectiveName] = val
-          })
-          combinedRows.push(allColNames.map((cName) => rowObj[cName] ?? ""))
-        }
-      }
-
-      // Filter to only columns that have non-empty data (max 15 columns) to minimize Gemini token usage
-      const activeColNames = allColNames.filter((cName) =>
-        combinedRows.some((row) => {
-          const idx = allColNames.indexOf(cName)
-          return idx >= 0 && Boolean(row[idx]?.trim())
-        })
-      ).slice(0, 15)
-
-      const finalColNames = activeColNames.length > 0 ? activeColNames : allColNames.slice(0, 12)
-      const prunedRows = combinedRows.slice(0, 3).map((row) =>
-        finalColNames.map((cName) => {
-          const idx = allColNames.indexOf(cName)
-          return row[idx] ?? ""
-        })
-      )
-
-      csvSamples[dCode] = [finalColNames, ...prunedRows]
-        .map((row) =>
-          row.map((val) => `"${val.replaceAll('"', '""')}"`).join(",")
-        )
-        .join("\r\n")
-    }
-
-    const proposal = await api<{ definitionJson: string }>(
-      "/api/app/assistant/propose",
-      {
-        method: "POST",
-        signal,
-        body: JSON.stringify({
-          datasetCodes: distinctDatasetCodes,
-          csvSamples,
-          context: state.context,
-        }),
-      }
-    )
-    definitionJson = proposal.definitionJson
-    state.artifacts.definitionJson = definitionJson
-    notify()
-  }
-
-  const spec = parseProfile(definitionJson)
-  // Sanitize rules: remove terminal_id as a mandatory key (POS register ID != acquirer terminal ID)
-  // and ensure trx_date pairs with trx_date across datasets when available
-  for (const rule of spec.rules || []) {
-    if (!Array.isArray(rule.keys)) continue
-    rule.keys = rule.keys.filter((k) => {
-      const vals = Object.values(k.fields || {})
-      return !vals.includes("terminal_id")
-    })
-    for (const key of rule.keys) {
-      if (key.type === "date" && key.fields) {
-        const vals = Object.values(key.fields)
-        if (vals.includes("trx_date") && vals.includes("settle_date")) {
-          for (const dCode of Object.keys(key.fields)) {
-            key.fields[dCode] = "trx_date"
-          }
-        }
-      }
-    }
-  }
-  definitionJson = JSON.stringify(spec, null, 2)
-  state.artifacts.definitionJson = definitionJson
-  if (signal.aborted) return
-
-  // Step 3: Canonical Datasets Registration (1 per dataset group)
+  // Step 2: Canonical Datasets Registration (1 per dataset group)
   state = {
     ...state,
-    currentStep: 3,
+    currentStep: 2,
     stepMessage: "Registering canonical datasets in catalog…",
     statusText: "Registering datasets",
   }
@@ -1312,47 +1199,32 @@ async function runWorkflowSteps(signal: AbortSignal) {
           sampleVals,
           gf.proposal?.steps
         )
-        if (!semantic) return
-
-        const targetName = semantic.canonicalName
-        const targetType = semantic.polarsType
+        if (!semantic && column.name.startsWith("column_")) return
+        const targetName = semantic?.canonicalName || column.name
+        const targetType =
+          semantic?.polarsType ||
+          columnType(column.name, sampleVals, gf.proposal?.steps)
 
         if (!seenCol.has(targetName)) {
           seenCol.add(targetName)
           unifiedColumns.push({
             name: targetName,
             polarsType: targetType,
-            isRequired: false,
-            semanticRole: "none",
+            isRequired: /^(company_code|branch_code)$/.test(targetName),
+            semanticRole: /^(company_code|branch_code)$/.test(targetName)
+              ? targetName
+              : "none",
           })
         }
       })
-    }
-
-    // Ensure any key fields referenced in spec.rules exist in the dataset schema
-    for (const rule of spec.rules || []) {
-      for (const key of rule.keys || []) {
-        const colName = (key.fields as Record<string, string>)?.[dCode]
-        if (colName && !seenCol.has(colName)) {
-          seenCol.add(colName)
-          let pType = "pl.String"
-          if (key.type === "amount") pType = "pl.Decimal(18,2)"
-          else if (key.type === "date") pType = "pl.Date"
-          unifiedColumns.push({
-            name: colName,
-            polarsType: pType,
-            isRequired: false,
-            semanticRole: "none",
-          })
-        }
-      }
     }
 
     // Fallback if a custom non-financial dataset had no standard semantic columns
     if (unifiedColumns.length === 0) {
       for (const gf of groupFiles) {
         gf.sample.columns.forEach((column, index) => {
-          if (column.included === false || column.name.startsWith("column_")) return
+          if (column.included === false || column.name.startsWith("column_"))
+            return
           const sampleVals = gf.sample.sampleRows
             .map((r) => r[index]?.trim() ?? "")
             .filter(Boolean)
@@ -1373,45 +1245,22 @@ async function runWorkflowSteps(signal: AbortSignal) {
 
     let dataset: CanonicalDataset
     if (existingDataset) {
-      dataset = await api<CanonicalDataset>(
-        `/api/app/canonical-dataset/${existingDataset.id}`,
-        {
-          method: "PUT",
-          signal,
-          body: JSON.stringify({
-            code: dCode,
-            name: groupMeta?.name || existingDataset.name || dCode,
-            description: `Configured from ${groupFiles.map((gf) => gf.file.name).join(", ")}`,
-            gcsPrefix: dCode.toLowerCase(),
-            schemaColumnsJson: JSON.stringify(unifiedColumns),
-            partitionColumnsJson: "[]",
-          }),
-        }
-      )
+      dataset = existingDataset
     } else {
       let catalogDataset: CanonicalDataset | undefined
       try {
-        const catalog = await api<CanonicalDataset[]>("/api/app/canonical-dataset", { signal })
+        const catalog = await api<CanonicalDataset[]>(
+          "/api/app/canonical-dataset",
+          { signal }
+        )
         catalogDataset = catalog.find((d) => d.code === dCode)
       } catch {
         // ignore
       }
 
       if (catalogDataset) {
-        dataset = await api<CanonicalDataset>(
-          `/api/app/canonical-dataset/${catalogDataset.id}`,
-          {
-            method: "PUT",
-            signal,
-            body: JSON.stringify({
-              code: dCode,
-              name: groupMeta?.name || catalogDataset.name || dCode,
-              description: `Configured from ${groupFiles.map((gf) => gf.file.name).join(", ")}`,
-              gcsPrefix: dCode.toLowerCase(),
-              schemaColumnsJson: JSON.stringify(unifiedColumns),
-              partitionColumnsJson: "[]",
-            }),
-          }
+        throw new Error(
+          `Dataset code ${dCode} is already in use. Start a fresh configuration to allocate a unique code.`
         )
       } else {
         dataset = await api<CanonicalDataset>("/api/app/canonical-dataset", {
@@ -1435,10 +1284,10 @@ async function runWorkflowSteps(signal: AbortSignal) {
 
   if (signal.aborted) return
 
-  // Step 4: Compiling & Publishing Parsers (1 PARSER PER FILE!)
+  // Step 3: Compiling & Publishing Parsers (1 PARSER PER FILE!)
   state = {
     ...state,
-    currentStep: 4,
+    currentStep: 3,
     stepMessage:
       "Compiling mapping pipelines and publishing parsers for each file…",
     statusText: "Creating parsers",
@@ -1447,6 +1296,7 @@ async function runWorkflowSteps(signal: AbortSignal) {
 
   for (const item of preparedList) {
     const existingParser = state.artifacts.parsers[item.meta.parserCode]
+    if (existingParser) continue
     const targetDataset = state.artifacts.datasets[item.meta.datasetCode]
     if (!targetDataset) {
       throw new Error(
@@ -1455,6 +1305,9 @@ async function runWorkflowSteps(signal: AbortSignal) {
     }
 
     const studio = emptyStudio()
+    studio.proposalSource =
+      state.artifacts.parserProposalSource || "local-heuristic"
+    studio.proposalWarnings = state.artifacts.parserProposalWarnings || []
     studio.datasetId = targetDataset.id
     studio.expectedFormat = item.isExcel ? "excel" : "csv"
     studio.sheetName = item.sheetName || ""
@@ -1468,7 +1321,7 @@ async function runWorkflowSteps(signal: AbortSignal) {
       resolvedHeaderIdx > 0 &&
       (!item.proposal?.headerMode || item.proposal?.headerMode === "firstRow")
         ? "rowIndex"
-        : ((item.proposal?.headerMode as any) || "firstRow")
+        : (item.proposal?.headerMode as HeaderMode) || "firstRow"
     studio.headerRowIndex = resolvedHeaderIdx
     studio.skipRows = resolvedSkipRows
     studio.removeTotalRows = Boolean(item.proposal?.removeTotalRows)
@@ -1476,14 +1329,34 @@ async function runWorkflowSteps(signal: AbortSignal) {
     studio.columns = item.sample.columns
     studio.sampleRows = item.sample.sampleRows
     studio.sampleFileName = item.file.name
-    studio.steps = (item.proposal?.steps || []).map((step: any, idx: number) => ({
-      id: step.id || `step-${idx + 1}`,
-      kind: step.kind,
-      enabled: step.enabled !== false,
-      label: step.label || `${step.kind} on ${step.source}`,
-      source: step.source,
-      params: step.params || {},
-    }))
+    for (const step of item.proposal?.steps || []) {
+      if (step.kind !== "maskCard") continue
+      const index = item.sample.columns.findIndex(
+        (column) => column.name === step.source
+      )
+      const values = item.sample.sampleRows
+        .map((row) => row[index] || "")
+        .filter(Boolean)
+      if (
+        !/(^|[^a-z])(card|pan)([^a-z]|$)|^column_\d+$/i.test(step.source) ||
+        !values.length ||
+        !values.every((value) => /^[0-9X*' ]{15,22}$/i.test(value))
+      ) {
+        throw new Error(
+          `Unsupported card masking on ${step.source} in ${item.file.name}. Review its parser proposal.`
+        )
+      }
+    }
+    studio.steps = (item.proposal?.steps || []).map(
+      (step: StudioStep, idx: number) => ({
+        id: step.id || `step-${idx + 1}`,
+        kind: step.kind,
+        enabled: step.enabled !== false,
+        label: step.label || `${step.kind} on ${step.source}`,
+        source: step.source,
+        params: step.params || {},
+      })
+    )
     studio.mappings = autoMap(
       syncMappings(targetDataset, []),
       item.sample.columns
@@ -1517,215 +1390,111 @@ async function runWorkflowSteps(signal: AbortSignal) {
       })
       state.artifacts.parsers[item.meta.parserCode] = parser
       notify()
-    } else if (existingParser.pipelineJson !== compiledPipelineJson) {
-      state = {
-        ...state,
-        stepMessage: `Updating parser pipeline configuration for ${item.file.name} (${item.meta.parserCode})…`,
-        statusText: `Updating parser for ${item.file.name}`,
-      }
-      notify()
-
-      const updated = await api<ParserConfiguration>(
-        `/api/app/parser/${existingParser.id}`,
-        {
-          method: "PUT",
-          signal,
-          body: JSON.stringify({
-            name: item.meta.parserCode,
-            fileFormat: item.isExcel ? "excel" : "csv",
-            outputGcsPrefix: targetDataset.gcsPrefix,
-            isActive: true,
-            pipelineJson: compiledPipelineJson,
-            createdWithAi: true,
-          }),
-        }
-      )
-      state.artifacts.parsers[item.meta.parserCode] = updated
-      delete state.artifacts.runs[item.meta.id]
-      notify()
     }
   }
 
   if (signal.aborted) return
 
-  // Step 5: ETL Pipeline Runs (for every file)
+  // Upload each file once, persist every receipt, then hand off to the durable server job.
+  state = {
+    ...state,
+    currentStep: 4,
+    stepMessage: "Uploading files for canonical parsing...",
+    statusText: "Uploading files",
+  }
+  notify()
+  for (const item of preparedList) {
+    if (signal.aborted) return
+    if (!state.artifacts.runs[item.meta.id]) {
+      const parser = state.artifacts.parsers[item.meta.parserCode]
+      state.artifacts.runs[item.meta.id] = await queueParserRun(
+        parser.id,
+        item.file,
+        signal
+      )
+      notify()
+    }
+  }
+  if (!state.artifacts.configurationId) {
+    state.artifacts.configurationId = crypto.randomUUID()
+    notify()
+  }
+  const job = await api<ConfigurationJob>("/api/app/ai-configuration", {
+    method: "POST",
+    signal,
+    body: JSON.stringify({
+      requestId: state.artifacts.configurationId,
+      context: state.context,
+      files: preparedList.map((item) => ({
+        datasetCode: item.meta.datasetCode,
+        fileName: item.file.name,
+        parserCode: item.meta.parserCode,
+        parserId: state.artifacts.parsers[item.meta.parserCode].id,
+        runId: state.artifacts.runs[item.meta.id].id,
+      })),
+    }),
+  })
+  await observeConfiguration(job, signal)
+}
+
+async function observeConfiguration(
+  initial: ConfigurationJob,
+  signal: AbortSignal
+) {
+  let job = initial
   state = {
     ...state,
     currentStep: 5,
+    statusText: "Validating canonical outputs",
     stepMessage:
-      "Uploading files to object storage and executing ETL parser runs…",
-    statusText: "Executing ETL pipelines",
+      "The server will wait for every file, draft rules from parsed outputs and preview reconciliation. You can leave this page.",
   }
   notify()
-
-  for (const item of preparedList) {
-    if (
-      !state.artifacts.runs[item.meta.id] ||
-      state.artifacts.runs[item.meta.id].status !== "Succeeded"
-    ) {
-      const parser = state.artifacts.parsers[item.meta.parserCode]
-      if (!parser)
-        throw new Error(`Parser for ${item.meta.parserCode} was not found.`)
-
-      state = {
-        ...state,
-        stepMessage: `Uploading ${item.file.name} to storage and executing ETL run…`,
-        statusText: `Parsing ${item.file.name}`,
+  while (job.status === "WaitingForParsers") {
+    await new Promise<void>((resolve, reject) => {
+      const done = () => {
+        signal.removeEventListener("abort", abort)
+        resolve()
       }
-      notify()
-
-      try {
-        const run = await uploadAndParse(parser.id, item.file, signal)
-        state.artifacts.runs[item.meta.id] = run
-        notify()
-      } catch (runErr) {
-        console.warn(`ETL run failed for ${item.file.name}:`, runErr)
-        // Self-heal: retry without problematic transformation steps
-        const targetDataset = state.artifacts.datasets[item.meta.datasetCode]
-        if (targetDataset) {
-          const healedStudio = emptyStudio()
-          healedStudio.datasetId = targetDataset.id
-          healedStudio.expectedFormat = item.isExcel ? "excel" : "csv"
-          healedStudio.sheetName = item.sheetName || ""
-          healedStudio.description = `Healed fallback parser for ${item.file.name}`
-          healedStudio.delimiter = item.proposal?.delimiter || ","
-          const healedHeaderIdx =
-            item.proposal?.headerRowIndex || item.excelInfo?.headerRowIndex || 0
-          const healedSkipRows =
-            item.proposal?.skipRows || item.excelInfo?.headerRowIndex || 0
-          healedStudio.headerMode =
-            healedHeaderIdx > 0 &&
-            (!item.proposal?.headerMode || item.proposal?.headerMode === "firstRow")
-              ? "rowIndex"
-              : ((item.proposal?.headerMode as any) || "firstRow")
-          healedStudio.headerRowIndex = healedHeaderIdx
-          healedStudio.skipRows = healedSkipRows
-          healedStudio.removeTotalRows = false
-          healedStudio.totalRowKeywords = ""
-          healedStudio.columns = item.sample.columns
-          healedStudio.sampleRows = item.sample.sampleRows
-          healedStudio.sampleFileName = item.file.name
-          healedStudio.steps = [] // Clear failing transformation steps
-          healedStudio.mappings = autoMap(
-            syncMappings(targetDataset, []),
-            item.sample.columns
-              .filter((column) => column.included !== false)
-              .map((column) => column.name)
-          )
-
-          state = {
-            ...state,
-            stepMessage: `Healing parser for ${item.file.name} and retrying ETL run…`,
-            statusText: `Healing ${item.file.name}`,
-          }
-          notify()
-
-          const healedParser = await api<ParserConfiguration>(
-            `/api/app/parser/${parser.id}`,
-            {
-              method: "PUT",
-              signal,
-              body: JSON.stringify({
-                name: item.meta.parserCode,
-                fileFormat: item.isExcel ? "excel" : "csv",
-                outputGcsPrefix: targetDataset.gcsPrefix,
-                isActive: true,
-                pipelineJson: JSON.stringify(
-                  compilePipeline(
-                    item.meta.parserCode,
-                    healedStudio,
-                    crypto.randomUUID(),
-                    2
-                  )
-                ),
-                createdWithAi: true,
-              }),
-            }
-          )
-          state.artifacts.parsers[item.meta.parserCode] = healedParser
-          const healedRun = await uploadAndParse(healedParser.id, item.file, signal)
-          state.artifacts.runs[item.meta.id] = healedRun
-          notify()
-          continue
-        }
-        throw runErr
+      const timer = setTimeout(done, 2500)
+      const abort = () => {
+        clearTimeout(timer)
+        reject(new DOMException("Cancelled", "AbortError"))
       }
-    }
-  }
-
-  if (signal.aborted) return
-
-  // Step 6: Profile Finalization
-  state = {
-    ...state,
-    currentStep: 6,
-    stepMessage: "Packaging datasets, parsers, and approved profile rules…",
-    statusText: "Finalizing reconciliation profile",
-  }
-  notify()
-
-  if (!state.artifacts.package) {
-    const pkg = await api<Package>("/api/app/package", {
-      method: "POST",
-      signal,
-      body: JSON.stringify({
-        name: spec.name.trim() || distinctDatasetCodes.join(" / "),
-        description: `Configured across ${distinctDatasetCodes.length} datasets and ${preparedList.length} files`,
-        createdWithAi: true,
-      }),
+      if (signal.aborted) abort()
+      else signal.addEventListener("abort", abort, { once: true })
     })
-    state.artifacts.package = pkg
-    notify()
+    job = await api<ConfigurationJob>(`/api/app/ai-configuration/${job.id}`, {
+      signal,
+    })
   }
-
-  const pkg = state.artifacts.package
-  await api(`/api/app/profile/${pkg.profileId}`, {
-    method: "PUT",
-    signal,
-    body: JSON.stringify({
-      definitionJson,
-      createdWithAi: true,
-    }),
-  })
-
-  const parserRunIds: Record<string, string> = {}
+  if (job.status === "Failed" || !job.package || !job.validation?.passed)
+    throw new Error(
+      job.error || "Configuration did not pass output validation."
+    )
   const multiParserRunIds: Record<string, string[]> = {}
-
-  for (const dCode of distinctDatasetCodes) {
-    const runsForDataset = preparedList
-      .filter((item) => item.meta.datasetCode === dCode)
-      .map((item) => state.artifacts.runs[item.meta.id]?.id)
-      .filter(Boolean)
-    if (runsForDataset.length > 0) {
-      parserRunIds[dCode] = runsForDataset[0]
-      multiParserRunIds[dCode] = runsForDataset
-    }
-  }
-
-  const completion: Completion = {
-    package: pkg,
-    definitionJson,
-    parserRunIds,
-    multiParserRunIds,
-    entries: preparedList.map((item) => ({
-      fileName: item.file.name,
-      datasetCode: item.meta.datasetCode,
-      parserCode: item.meta.parserCode,
-      parserId: state.artifacts.parsers[item.meta.parserCode]?.id,
-      runId: state.artifacts.runs[item.meta.id]?.id,
-    })),
-  }
-
+  for (const file of job.files)
+    (multiParserRunIds[file.datasetCode] ||= []).push(file.runId)
   stopTimer()
   state = {
     ...state,
     status: "completed",
     currentStep: 6,
-    completion,
-    stepMessage: "All 6 configuration steps completed successfully.",
-    statusText: `Configuration complete. ${preparedList.length} files parsed across ${distinctDatasetCodes.length} datasets.`,
     error: "",
-    updatedAt: Date.now(),
+    stepMessage: "Canonical outputs and reconciliation preview validated.",
+    statusText: "Configuration ready",
+    completion: {
+      configurationId: job.id,
+      validation: job.validation,
+      source: job.source,
+      package: job.package,
+      definitionJson: "",
+      parserRunIds: Object.fromEntries(
+        Object.entries(multiParserRunIds).map(([code, ids]) => [code, ids[0]])
+      ),
+      multiParserRunIds,
+      entries: job.files.map((file) => ({ ...file })),
+    },
   }
   notify()
 }
@@ -1745,59 +1514,26 @@ export function subscribeAiSession(
   }
 }
 
-async function buildAnomalousFiles(errorDetail: string) {
-  return Promise.all(
-    state.files.map(async (f) => {
-      let rawSnippet = ""
-      try {
-        const fileObj = inMemoryFiles.get(f.id)
-        if (fileObj) {
-          if (isZipFile(fileObj.name)) {
-            const extracted = await extractFilesFromZip(fileObj)
-            if (extracted.length > 0) {
-              const inner = extracted[0]
-              if (isExcelFile(inner.name)) {
-                const buf = await inner.arrayBuffer()
-                const excelInfo = parseExcelSample(buf)
-                rawSnippet = (excelInfo.snippet || "").slice(0, 400)
-              } else {
-                const text = await inner.text()
-                rawSnippet = text.split(/\r?\n/).slice(0, 8).join("\n").slice(0, 400)
-              }
-            }
-          } else if (isExcelFile(fileObj.name)) {
-            const buf = await fileObj.arrayBuffer()
-            const excelInfo = parseExcelSample(buf)
-            rawSnippet = (excelInfo.snippet || "").slice(0, 400)
-          } else {
-            const text = await fileObj.text()
-            rawSnippet = text.split(/\r?\n/).slice(0, 8).join("\n").slice(0, 400)
-          }
-        }
-      } catch {
-        // ignore snippet retrieval error
-      }
-      return {
-        fileId: f.id,
-        fileName: f.name,
-        datasetCode: f.datasetCode,
-        parserCode: f.parserCode,
-        fileSize: f.size,
-        rawSnippet,
-        errorDetail,
-      }
-    })
-  )
-}
-
 export async function startAiConfiguration(
   groups: StagedDatasetGroup[],
   context: string
 ): Promise<void> {
-  if (groups.length < 2 || groups.length > 5) {
+  if (
+    context.trim().length > 1200 ||
+    groups.reduce((total, group) => total + group.files.length, 0) > 100
+  ) {
     state = {
       ...state,
-      error: "Please configure between 2 and 5 datasets.",
+      error:
+        "Use at most 100 files and 1,200 business context characters per setup.",
+    }
+    notify()
+    return
+  }
+  if (groups.length < 2 || groups.length > 3) {
+    state = {
+      ...state,
+      error: "Please configure two or three datasets.",
     }
     notify()
     return
@@ -1937,8 +1673,7 @@ export async function startAiConfiguration(
       let parserCode = `${datasetCode}_${fileStem}`.slice(0, 36)
       let pSuffix = 2
       while (usedParserCodes.has(parserCode)) {
-        parserCode =
-          `${datasetCode}_${fileStem}`.slice(0, 33) + `_${pSuffix++}`
+        parserCode = `${datasetCode}_${fileStem}`.slice(0, 33) + `_${pSuffix++}`
       }
       usedParserCodes.add(parserCode)
 
@@ -1989,79 +1724,29 @@ export async function startAiConfiguration(
   const controller = new AbortController()
   activeAbortController = controller
 
-  let recoveryAttempts = 0
-  while (true) {
-    try {
+  try {
+    if (state.artifacts.configurationId && state.currentStep >= 5) {
+      const job = await api<ConfigurationJob>(
+        `/api/app/ai-configuration/${state.artifacts.configurationId}`,
+        { signal: controller.signal }
+      )
+      await observeConfiguration(job, controller.signal)
+    } else {
       await runWorkflowSteps(controller.signal)
-      break
-    } catch (caught) {
-      if (controller.signal.aborted) break
-      recoveryAttempts++
-      if (recoveryAttempts > 1) {
-        stopTimer()
-        state = {
-          ...state,
-          status: "error",
-          error:
-            caught instanceof Error
-              ? caught.message
-              : "Automatic setup failed after recovery attempt.",
-          statusText: "Configuration error",
-        }
-        notify()
-        break
+    }
+  } catch (caught) {
+    if (!controller.signal.aborted) {
+      stopTimer()
+      state = {
+        ...state,
+        status: "error",
+        error:
+          caught instanceof Error
+            ? caught.message
+            : "Configuration validation failed.",
+        statusText: "Review required",
       }
-
-      let recovered = false
-      try {
-        const errorMsg = caught instanceof Error ? caught.message : String(caught)
-        const anomalous = await buildAnomalousFiles(errorMsg)
-        const decision = await consultAiFallback(
-          state.currentStep || 1,
-          `Step ${state.currentStep || 1}`,
-          errorMsg,
-          anomalous,
-          controller.signal
-        )
-        if (decision?.canRecover) {
-          if (decision.actionTaken === "switch_to_fast_heuristic") {
-            recovered = true
-          } else if (decision.filesToSkip.length > 0) {
-            const remainingFiles = state.files.filter(
-              (f) => !decision.filesToSkip.includes(f.name)
-            )
-            const distinctDatasets = new Set(remainingFiles.map((f) => f.datasetCode))
-            if (distinctDatasets.size >= 2) {
-              state.files = remainingFiles
-              recovered = true
-            }
-          }
-          if (decision.adjustedParsers.length > 0) {
-            // Invalidate stale parser artifacts so Step 4 creates/updates with adjusted settings
-            for (const adj of decision.adjustedParsers) {
-              delete state.artifacts.parsers[adj.code]
-            }
-            recovered = true
-          }
-        }
-      } catch (recoveryErr) {
-        console.warn("AI Fallback recovery error:", recoveryErr)
-      }
-
-      if (!recovered) {
-        stopTimer()
-        state = {
-          ...state,
-          status: "error",
-          error:
-            caught instanceof Error
-              ? caught.message
-              : "Automatic setup failed.",
-          statusText: "Configuration error",
-        }
-        notify()
-        break
-      }
+      notify()
     }
   }
 }
@@ -2077,7 +1762,11 @@ export async function resumeAiConfiguration(): Promise<void> {
     }
   }
 
-  if (inMemoryFiles.size === 0 && state.files.length > 0) {
+  if (
+    !state.artifacts.configurationId &&
+    inMemoryFiles.size === 0 &&
+    state.files.length > 0
+  ) {
     state = {
       ...state,
       status: "error",
@@ -2102,79 +1791,29 @@ export async function resumeAiConfiguration(): Promise<void> {
   const controller = new AbortController()
   activeAbortController = controller
 
-  let recoveryAttempts = 0
-  while (true) {
-    try {
+  try {
+    if (state.artifacts.configurationId && state.currentStep >= 5) {
+      const job = await api<ConfigurationJob>(
+        `/api/app/ai-configuration/${state.artifacts.configurationId}`,
+        { signal: controller.signal }
+      )
+      await observeConfiguration(job, controller.signal)
+    } else {
       await runWorkflowSteps(controller.signal)
-      break
-    } catch (caught) {
-      if (controller.signal.aborted) break
-      recoveryAttempts++
-      if (recoveryAttempts > 1) {
-        stopTimer()
-        state = {
-          ...state,
-          status: "error",
-          error:
-            caught instanceof Error
-              ? caught.message
-              : "Automatic setup failed after recovery attempt.",
-          statusText: "Configuration error",
-        }
-        notify()
-        break
+    }
+  } catch (caught) {
+    if (!controller.signal.aborted) {
+      stopTimer()
+      state = {
+        ...state,
+        status: "error",
+        error:
+          caught instanceof Error
+            ? caught.message
+            : "Configuration validation failed.",
+        statusText: "Review required",
       }
-
-      let recovered = false
-      try {
-        const errorMsg = caught instanceof Error ? caught.message : String(caught)
-        const anomalous = await buildAnomalousFiles(errorMsg)
-        const decision = await consultAiFallback(
-          state.currentStep || 1,
-          `Step ${state.currentStep || 1}`,
-          errorMsg,
-          anomalous,
-          controller.signal
-        )
-        if (decision?.canRecover) {
-          if (decision.actionTaken === "switch_to_fast_heuristic") {
-            recovered = true
-          } else if (decision.filesToSkip.length > 0) {
-            const remainingFiles = state.files.filter(
-              (f) => !decision.filesToSkip.includes(f.name)
-            )
-            const distinctDatasets = new Set(remainingFiles.map((f) => f.datasetCode))
-            if (distinctDatasets.size >= 2) {
-              state.files = remainingFiles
-              recovered = true
-            }
-          }
-          if (decision.adjustedParsers.length > 0) {
-            // Invalidate stale parser artifacts so Step 4 creates/updates with adjusted settings
-            for (const adj of decision.adjustedParsers) {
-              delete state.artifacts.parsers[adj.code]
-            }
-            recovered = true
-          }
-        }
-      } catch (recoveryErr) {
-        console.warn("AI Fallback recovery error:", recoveryErr)
-      }
-
-      if (!recovered) {
-        stopTimer()
-        state = {
-          ...state,
-          status: "error",
-          error:
-            caught instanceof Error
-              ? caught.message
-              : "Automatic setup failed.",
-          statusText: "Configuration error",
-        }
-        notify()
-        break
-      }
+      notify()
     }
   }
 }
@@ -2188,7 +1827,10 @@ export function pauseAiConfiguration(): void {
   state = {
     ...state,
     status: "paused",
-    stepMessage: "Workflow paused by user.",
+    stepMessage:
+      state.artifacts.configurationId && state.currentStep >= 5
+        ? "Monitoring paused. Server validation continues; resume to see its result."
+        : "Workflow paused by user.",
   }
   notify()
 }
@@ -2227,32 +1869,69 @@ export async function resetAiConfiguration(): Promise<void> {
   notify()
 }
 
+export async function refreshConfigurationValidation(): Promise<ConfigurationValidation> {
+  const id = state.completion?.configurationId
+  if (!id)
+    throw new Error(
+      "This configuration predates output validation. Create a fresh validated setup."
+    )
+  const report = await api<ConfigurationValidation>(
+    `/api/app/ai-configuration/${id}/validation`
+  )
+  state = { ...state, completion: { ...state.completion!, validation: report } }
+  notify()
+  return report
+}
+
+export async function restoreServerConfiguration(id: string): Promise<void> {
+  activeAbortController?.abort()
+  const controller = new AbortController()
+  activeAbortController = controller
+  try {
+    const job = await api<ConfigurationJob>(`/api/app/ai-configuration/${id}`, {
+      signal: controller.signal,
+    })
+    state = {
+      ...state,
+      status: "running",
+      error: "",
+      currentStep: 5,
+      artifacts: { ...initialArtifacts(), configurationId: id },
+      files: job.files.map((file) => ({
+        id: file.runId,
+        name: file.fileName,
+        size: 0,
+        datasetCode: file.datasetCode,
+        parserCode: file.parserCode,
+      })),
+    }
+    notify()
+    await observeConfiguration(job, controller.signal)
+  } catch (caught) {
+    if (!controller.signal.aborted) {
+      state = {
+        ...state,
+        status: "error",
+        error:
+          caught instanceof Error
+            ? caught.message
+            : "Unable to restore configuration.",
+      }
+      notify()
+    }
+  }
+}
+
 export async function runSampleReconciliation(): Promise<{ runId: string }> {
-  if (!state.completion)
-    throw new Error("No completed configuration available.")
-  const {
-    package: pkg,
-    definitionJson,
-    parserRunIds,
-    multiParserRunIds,
-  } = state.completion
-
-  await api(`/api/app/profile/${pkg.profileId}/approve`, {
-    method: "POST",
-    body: JSON.stringify({
-      definitionJson,
-      createdWithAi: true,
-    }),
-  })
-
-  const run = await api<{ id: string }>("/api/app/run", {
-    method: "POST",
-    body: JSON.stringify({
-      profileId: pkg.profileId,
-      parserRunIds,
-      multiParserRunIds,
-    }),
-  })
-
+  const completion = state.completion
+  if (!completion?.configurationId || !completion.validation?.passed)
+    throw new Error("Validate the current configuration before running.")
+  const run = await api<{ id: string }>(
+    `/api/app/ai-configuration/${completion.configurationId}/run`,
+    {
+      method: "POST",
+      body: JSON.stringify({ revision: completion.validation.revision }),
+    }
+  )
   return { runId: run.id }
 }

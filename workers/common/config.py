@@ -4,7 +4,7 @@ import os
 
 
 def get_backend_api_url() -> str:
-    return os.getenv("GRID_API_URL", "http://localhost:44344").rstrip("/")
+    return (os.getenv("GRID_API_URL") or os.getenv("BACKEND_API_URL") or "http://localhost:44344").rstrip("/")
 
 
 def get_worker_runner_secret() -> str:

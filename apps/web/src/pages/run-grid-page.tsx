@@ -55,9 +55,7 @@ export function RunGridPage() {
     const items: GridRow[] = run.groups.flatMap((group, index) => {
       const isPartial =
         group.ruleType === "partial" ||
-        group.evidence?.comparison === "partial_match" ||
-        Boolean(group.remarks) ||
-        Boolean(group.evidence?.remarks)
+        group.evidence?.comparison === "partial_match"
       const status = isPartial ? ("Partial Match" as const) : ("Matched" as const)
       const remarks =
         group.remarks ||
@@ -205,7 +203,7 @@ export function RunGridPage() {
                   "Dataset",
                   "Row",
                   "System Remarks",
-                  "Confidence Score",
+                  "Match Similarity",
                   "Rule",
                   "Record",
                   "Evidence",
@@ -217,7 +215,7 @@ export function RunGridPage() {
                   String(row.csvRow),
                   row.remarks ?? "",
                   row.score != null
-                    ? `${Math.round(row.score * 100)}%`
+                    ? `${(row.score * 100).toFixed(2)}%`
                     : row.status === "Matched"
                     ? "100%"
                     : "—",
@@ -337,7 +335,7 @@ export function RunGridPage() {
                 <th className="w-28 px-4 py-2.5">Dataset</th>
                 <th className="w-20 px-4 py-2.5">Row</th>
                 <th className="min-w-[260px] px-4 py-2.5">System Remarks</th>
-                <th className="w-36 px-4 py-2.5">Confidence Score</th>
+                <th className="w-36 px-4 py-2.5" title="Similarity of compared fields, not a probability that the whole transaction is correct.">Match Similarity</th>
                 <th className="w-24 px-4 py-2.5 text-right">Details</th>
               </tr>
             </thead>
@@ -427,7 +425,7 @@ export function RunGridPage() {
                               : "bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20"
                           }`}
                         >
-                          {Math.round(row.score * 100)}%
+                          {(row.score * 100).toFixed(2)}%
                         </span>
                       ) : row.status === "Matched" ? (
                         <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-2 py-0.5 font-semibold text-xs text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
@@ -575,7 +573,7 @@ export function RunGridPage() {
                   </div>
                   {selected.score != null ? (
                     <span className="rounded bg-primary/10 px-2.5 py-1 font-mono text-xs font-bold text-primary">
-                      Match Score: {Math.round(selected.score * 100)}%
+                      Match Similarity: {(selected.score * 100).toFixed(2)}%
                     </span>
                   ) : null}
                 </div>

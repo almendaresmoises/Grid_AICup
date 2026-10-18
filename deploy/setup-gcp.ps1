@@ -2,7 +2,7 @@ param (
     [Parameter(Mandatory = $false)]
     [string]$ProjectId,
     [Parameter(Mandatory = $false)]
-    [string]$Region = "asia-southeast1",
+    [string]$Region = "us-central1",
     [Parameter(Mandatory = $false)]
     [string]$BucketName
 )
@@ -66,6 +66,8 @@ gsutil iam ch "serviceAccount:$ApiSa:roles/storage.objectAdmin" "gs://$BucketNam
 gsutil iam ch "serviceAccount:$WorkerSa:roles/storage.objectAdmin" "gs://$BucketName"
 
 # Pub/Sub permissions
+gcloud projects add-iam-policy-binding $ProjectId --member="serviceAccount:$ApiSa" --role="roles/pubsub.editor"
+gcloud projects add-iam-policy-binding $ProjectId --member="serviceAccount:$WorkerSa" --role="roles/pubsub.editor"
 gcloud pubsub topics add-iam-policy-binding grid-parser-runs --member="serviceAccount:$ApiSa" --role="roles/pubsub.publisher"
 gcloud pubsub topics add-iam-policy-binding grid-datasets --member="serviceAccount:$ApiSa" --role="roles/pubsub.publisher"
 gcloud pubsub subscriptions add-iam-policy-binding grid-parser-runs-etl --member="serviceAccount:$WorkerSa" --role="roles/pubsub.subscriber"

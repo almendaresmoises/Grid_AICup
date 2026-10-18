@@ -26,6 +26,7 @@ public class GridDbContext :
     AbpDbContext<GridDbContext>,
     IIdentityDbContext
 {
+    public DbSet<AiConfiguration> AiConfigurations { get; set; } = null!;
     public DbSet<Dataset> Datasets { get; set; } = null!;
     public DbSet<DatasetRow> DatasetRows { get; set; } = null!;
     public DbSet<Package> Packages { get; set; } = null!;
@@ -37,7 +38,18 @@ public class GridDbContext :
     public DbSet<RunRecord> RunRecords { get; set; } = null!;
     public DbSet<ParserConfiguration> ParserConfigurations { get; set; } = null!;
     public DbSet<ParserRun> ParserRuns { get; set; } = null!;
+    public DbSet<ParserConfigurationRevision> ParserConfigurationRevisions { get; set; } = null!;
     public DbSet<CanonicalDataset> CanonicalDatasets { get; set; } = null!;
+    public DbSet<CanonicalDatasetRevision> CanonicalDatasetRevisions { get; set; } = null!;
+    public DbSet<ReconciliationAnalysis> ReconciliationAnalyses { get; set; } = null!;
+    public DbSet<ProfileAnalysisSlot> ProfileAnalysisSlots { get; set; } = null!;
+    public DbSet<ReconciliationAnalysisChange> ReconciliationAnalysisChanges { get; set; } = null!;
+    public DbSet<ReconciliationAnalysisValidation> ReconciliationAnalysisValidations { get; set; } = null!;
+    public DbSet<ConfigurationCommit> ConfigurationCommits { get; set; } = null!;
+    public DbSet<ConfigurationExecution> ConfigurationExecutions { get; set; } = null!;
+    public DbSet<AnalysisWorkAttempt> AnalysisWorkAttempts { get; set; } = null!;
+    public DbSet<ConfigurationDispatch> ConfigurationDispatches { get; set; } = null!;
+    public DbSet<ConfigurationRequestReceipt> ConfigurationRequestReceipts { get; set; } = null!;
 
 
     #region Entities from the modules

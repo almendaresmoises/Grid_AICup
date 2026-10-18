@@ -18,7 +18,7 @@ public static class NumericMatching
         {
             if (diff <= tolerance.Value)
             {
-                return Math.Round(1.0m - (diff / (tolerance.Value * 2m)), 4);
+                return Math.Min(0.9999m, Math.Round(1.0m - (diff / (tolerance.Value * 2m)), 4));
             }
         }
 
@@ -29,6 +29,6 @@ public static class NumericMatching
         }
 
         var sim = 1.0m - (diff / maxVal);
-        return sim < 0m ? 0m : Math.Round(sim, 4);
+        return sim < 0m ? 0m : Math.Min(0.9999m, Math.Round(sim, 4));
     }
 }

@@ -219,6 +219,22 @@ export function RunOutcomeChart({
               vectorEffect="non-scaling-stroke"
             />
           ))}
+          {shown.map((item) => (
+            <g key={`${item.key}-markers`}>
+              {days.map((day, index) => (
+                <circle
+                  key={day.date}
+                  cx={x(index)}
+                  cy={y(day[item.key])}
+                  r="3.5"
+                  fill={item.color}
+                  stroke="var(--card)"
+                  strokeWidth="1.5"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </g>
+          ))}
           {active !== null && selected ? (
             <g>
               <line
@@ -261,7 +277,8 @@ export function RunOutcomeChart({
               </p>
             ))}
             <p className="mt-2 border-t pt-2 text-muted-foreground">
-              {selected.completedRuns.toLocaleString()} completed runs
+              {selected.completedRuns.toLocaleString()} completed{" "}
+              {selected.completedRuns === 1 ? "run" : "runs"}
             </p>
           </div>
         ) : null}

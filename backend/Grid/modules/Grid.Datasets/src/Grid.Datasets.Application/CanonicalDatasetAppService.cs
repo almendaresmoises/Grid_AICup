@@ -154,7 +154,7 @@ public class CanonicalDatasetAppService : ApplicationService, ICanonicalDatasetA
         {
             await admin.CreateTopicAsync(topic);
         }
-        catch (RpcException exception) when (exception.StatusCode == StatusCode.AlreadyExists)
+        catch (RpcException exception) when (exception.StatusCode is StatusCode.AlreadyExists or StatusCode.PermissionDenied)
         {
         }
 

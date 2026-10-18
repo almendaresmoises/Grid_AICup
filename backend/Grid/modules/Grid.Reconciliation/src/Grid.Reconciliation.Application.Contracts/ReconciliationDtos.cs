@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace Grid.Reconciliation;
 
@@ -71,6 +72,7 @@ public class CreatePackageDto
 
 public class ProfileDto
 {
+    public Guid? AiConfigurationId { get; set; }
     public Guid Id { get; set; }
 
     public Guid PackageId { get; set; }
@@ -157,6 +159,7 @@ public class EvidenceDto
 
     public decimal? Score { get; set; }
 
+    [JsonPropertyName("divergent_key")]
     public string? DivergentKey { get; set; }
 }
 
@@ -201,12 +204,18 @@ public class ProposeProfileDto
 
     public Dictionary<string, Guid> ParserRunIds { get; set; } = [];
 
+    public Dictionary<string, List<Guid>> MultiParserRunIds { get; set; } = [];
+
     public Dictionary<string, string> CsvSamples { get; set; } = [];
 }
 
 public class ProposalDto
 {
     public string DefinitionJson { get; set; } = "";
+
+    public string Source { get; set; } = "";
+
+    public List<string> Warnings { get; set; } = [];
 }
 
 public class InvestigateInput
@@ -287,6 +296,10 @@ public class FileSnippetDto
 public class ParsersProposalDto
 {
     public List<ParserProposalItemDto> Parsers { get; set; } = [];
+
+    public string Source { get; set; } = "";
+
+    public List<string> Warnings { get; set; } = [];
 }
 
 public class ParserProposalItemDto
