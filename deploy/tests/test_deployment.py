@@ -46,6 +46,11 @@ for argument in args:
         name = argument.split("=", 1)[1]
         event["file"] = name
         event["environment"] = json.loads(pathlib.Path(name).read_text(encoding="utf-8-sig"))
+if tool == "dotnet":
+    event["connection"] = os.environ.get("ConnectionStrings__Default")
+    event["webUrl"] = os.environ.get("OpenIddict__Applications__Grid_App__RootUrl")
+elif tool == "npm":
+    event["apiUrl"] = os.environ.get("VITE_API_URL")
 with open(os.environ["GRID_TEST_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(event) + "\n")
 command = " ".join([tool, *args])
@@ -66,14 +71,16 @@ class BashDeploymentTests(unittest.TestCase):
         self.addCleanup(self.sandbox.cleanup)
         self.root = Path(self.sandbox.name)
         (self.root / "deploy").mkdir()
-        for name in ("common.sh", "deploy-cloudrun.sh", "setup-gcp.sh"):
+        for name in ("common.sh", "deploy-cloudrun.sh", "setup-gcp.sh", "run-migrations.sh", "deploy-firebase.sh"):
             shutil.copyfile(DEPLOY / name, self.root / "deploy" / name)
+        (self.root / "backend" / "Grid" / "src" / "Grid.DbMigrator").mkdir(parents=True, exist_ok=True)
+        (self.root / "apps" / "web").mkdir(parents=True, exist_ok=True)
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.mock = self.root / "mock.py"
         self.mock.write_text(MOCK, encoding="utf-8")
         self.log = self.root / "commands.jsonl"
-        for tool in ("gcloud", "docker", "gsutil"):
+        for tool in ("gcloud", "docker", "gsutil", "dotnet", "npm", "firebase"):
             script = self.bin / tool
             script.write_text(
                 f'#!/usr/bin/env bash\nexec "$GRID_TEST_PYTHON" "$GRID_TEST_MOCK" {tool} "$@"\n',
@@ -109,7 +116,7 @@ class BashDeploymentTests(unittest.TestCase):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
     def test_syntax(self):
-        for name in ("common.sh", "deploy-cloudrun.sh", "setup-gcp.sh"):
+        for name in ("common.sh", "deploy-cloudrun.sh", "setup-gcp.sh", "run-migrations.sh", "deploy-firebase.sh"):
             result = subprocess.run([BASH, "-n", str(DEPLOY / name)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -218,6 +225,25 @@ class BashDeploymentTests(unittest.TestCase):
         result = self.run_script("deploy-cloudrun.sh")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.events(), [])
+
+    def test_bash_migrations_run_with_clean_environment(self):
+        result = self.run_script("run-migrations.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dotnet_events = [e for e in self.events() if e["tool"] == "dotnet"]
+        self.assertEqual(len(dotnet_events), 1)
+        self.assertEqual(dotnet_events[0]["connection"], CONNECTION)
+        self.assertEqual(dotnet_events[0]["webUrl"], "https://one.example")
+        self.assertNotIn("Password=space", result.stdout + result.stderr)
+
+    def test_bash_firebase_deploy_uses_discovered_url(self):
+        result = self.run_script("deploy-firebase.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        npm_events = [e for e in self.events() if e["tool"] == "npm"]
+        firebase_events = [e for e in self.events() if e["tool"] == "firebase"]
+        self.assertEqual(len(npm_events), 1)
+        self.assertEqual(len(firebase_events), 1)
+        self.assertEqual(npm_events[0]["apiUrl"], "https://discovered-api.example.test")
+        self.assertIn("test-web", firebase_events[0]["args"])
 
 
 if __name__ == "__main__":

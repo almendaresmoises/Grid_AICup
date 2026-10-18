@@ -68,19 +68,26 @@ done
 if [[ -n "$GEMINI_KEY" ]]; then API_BASE+=(GEMINI_API_KEY "$GEMINI_KEY" Gemini__ApiKey "$GEMINI_KEY"); fi
 if [[ -n "$MODEL" ]]; then API_BASE+=(GEMINI_MODEL "$MODEL" Gemini__Model "$MODEL"); fi
 INITIAL=("${API_BASE[@]}")
-if [[ -n "$CONFIGURED_URL" ]]; then INITIAL+=(App__SelfUrl "$CONFIGURED_URL"); fi
-if [[ -n "${AUTHORITY:-$CONFIGURED_URL}" ]]; then INITIAL+=(AuthServer__Authority "${AUTHORITY:-$CONFIGURED_URL}"); fi
+if [[ -n "$CONFIGURED_URL" ]]; then
+    INITIAL+=(App__SelfUrl "$CONFIGURED_URL" AuthServer__Authority "${AUTHORITY:-$CONFIGURED_URL}" OpenIddict__Applications__Grid_Swagger__RootUrl "${SWAGGER_URL:-$CONFIGURED_URL}")
+elif [[ -n "$AUTHORITY" ]]; then
+    INITIAL+=(AuthServer__Authority "$AUTHORITY")
+fi
 API_ENV_FILE=$(grid_env_file "${INITIAL[@]}")
 gcloud run deploy "$GRID_API_SERVICE" --project="$GRID_PROJECT" --image="$API_IMAGE" \
     --platform=managed --region="$GRID_REGION" --port=8080 --allow-unauthenticated \
     --service-account="$GRID_API_ACCOUNT" --memory="$API_MEMORY" --cpu="$API_CPU" \
     --env-vars-file="$API_ENV_FILE" --quiet
-API_URL=$(grid_api_url)
-rm -f -- "$API_ENV_FILE"
-API_ENV_FILE=$(grid_env_file "${API_BASE[@]}" App__SelfUrl "$API_URL" \
-    AuthServer__Authority "${AUTHORITY:-$API_URL}" OpenIddict__Applications__Grid_Swagger__RootUrl "${SWAGGER_URL:-$API_URL}")
-gcloud run services update "$GRID_API_SERVICE" --project="$GRID_PROJECT" --platform=managed \
-    --region="$GRID_REGION" --env-vars-file="$API_ENV_FILE" --quiet
+if [[ -z "$CONFIGURED_URL" ]]; then
+    API_URL=$(grid_api_url)
+    rm -f -- "$API_ENV_FILE"
+    API_ENV_FILE=$(grid_env_file "${API_BASE[@]}" App__SelfUrl "$API_URL" \
+        AuthServer__Authority "${AUTHORITY:-$API_URL}" OpenIddict__Applications__Grid_Swagger__RootUrl "${SWAGGER_URL:-$API_URL}")
+    gcloud run services update "$GRID_API_SERVICE" --project="$GRID_PROJECT" --platform=managed \
+        --region="$GRID_REGION" --env-vars-file="$API_ENV_FILE" --quiet
+else
+    API_URL="$CONFIGURED_URL"
+fi
 docker build -f deploy/worker.Dockerfile -t "$WORKER_IMAGE" .
 docker push "$WORKER_IMAGE"
 WORKER_ENV_FILE=$(grid_env_file GRID_ENV Production GOOGLE_CLOUD_PROJECT "$GRID_PROJECT" GCS_BUCKET "$GRID_BUCKET" \

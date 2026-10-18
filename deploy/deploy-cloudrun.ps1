@@ -57,21 +57,30 @@ try {
     }
     if ($apiKey) { $apiEnv['GEMINI_API_KEY'] = $apiKey; $apiEnv['Gemini__ApiKey'] = $apiKey }
     if ($model) { $apiEnv['GEMINI_MODEL'] = $model; $apiEnv['Gemini__Model'] = $model }
-    if ($configuredApiUrl) { $apiEnv['App__SelfUrl'] = $configuredApiUrl }
-    if ($authority -or $configuredApiUrl) { $apiEnv['AuthServer__Authority'] = $(if ($authority) { $authority } else { $configuredApiUrl }) }
+    if ($configuredApiUrl) {
+        $apiEnv['App__SelfUrl'] = $configuredApiUrl
+        $apiEnv['AuthServer__Authority'] = $(if ($authority) { $authority } else { $configuredApiUrl })
+        $apiEnv['OpenIddict__Applications__Grid_Swagger__RootUrl'] = Get-GridSetting -Names @('OpenIddict__Applications__Grid_Swagger__RootUrl') -Default $configuredApiUrl
+    } elseif ($authority) {
+        $apiEnv['AuthServer__Authority'] = $authority
+    }
     $apiFile = New-GridEnvironmentFile $apiEnv
     Invoke-GridCommand 'gcloud' @('run', 'deploy', $cloud.ApiService, "--project=$($cloud.Project)",
         "--image=$apiImage", '--platform=managed', "--region=$($cloud.Region)", '--port=8080',
         '--allow-unauthenticated', "--service-account=$($cloud.ApiAccount)", "--memory=$apiMemory", "--cpu=$apiCpu",
         "--env-vars-file=$apiFile", '--quiet')
-    $apiUrl = Get-GridApiUrl $cloud
-    $apiEnv['App__SelfUrl'] = $apiUrl
-    $apiEnv['AuthServer__Authority'] = $(if ($authority) { $authority } else { $apiUrl })
-    $apiEnv['OpenIddict__Applications__Grid_Swagger__RootUrl'] = Get-GridSetting -Names @('OpenIddict__Applications__Grid_Swagger__RootUrl') -Default $apiUrl
-    Remove-Item -LiteralPath $apiFile -Force
-    $apiFile = New-GridEnvironmentFile $apiEnv
-    Invoke-GridCommand 'gcloud' @('run', 'services', 'update', $cloud.ApiService, "--project=$($cloud.Project)",
-        '--platform=managed', "--region=$($cloud.Region)", "--env-vars-file=$apiFile", '--quiet')
+    if (-not $configuredApiUrl) {
+        $apiUrl = Get-GridApiUrl $cloud
+        $apiEnv['App__SelfUrl'] = $apiUrl
+        $apiEnv['AuthServer__Authority'] = $(if ($authority) { $authority } else { $apiUrl })
+        $apiEnv['OpenIddict__Applications__Grid_Swagger__RootUrl'] = Get-GridSetting -Names @('OpenIddict__Applications__Grid_Swagger__RootUrl') -Default $apiUrl
+        Remove-Item -LiteralPath $apiFile -Force
+        $apiFile = New-GridEnvironmentFile $apiEnv
+        Invoke-GridCommand 'gcloud' @('run', 'services', 'update', $cloud.ApiService, "--project=$($cloud.Project)",
+            '--platform=managed', "--region=$($cloud.Region)", "--env-vars-file=$apiFile", '--quiet')
+    } else {
+        $apiUrl = $configuredApiUrl
+    }
     Invoke-GridCommand 'docker' @('build', '-f', 'deploy/worker.Dockerfile', '-t', $workerImage, '.')
     Invoke-GridCommand 'docker' @('push', $workerImage)
     $workerFile = New-GridEnvironmentFile @{
